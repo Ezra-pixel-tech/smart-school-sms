@@ -18,6 +18,7 @@ A professional multi-school School Management System for school administrators, 
 - Library/resource catalogue
 - Printable soft-copy results with school branding
 - Local SQLite database for offline/local school deployment
+- PostgreSQL-ready database layer for online hosting
 
 ## Run Locally
 
@@ -77,7 +78,7 @@ Recommended production changes:
 
 - Set a strong `SECRET_KEY` in environment variables.
 - Set `FLASK_DEBUG=0`.
-- Use PostgreSQL instead of SQLite for many schools and many users.
+- Use PostgreSQL instead of SQLite for many schools and many users by setting `DATABASE_URL`.
 - Put uploaded crests on persistent storage.
 - Use HTTPS.
 - Change the default system admin password.
@@ -97,6 +98,7 @@ Example environment variables:
 SECRET_KEY=replace-with-a-long-random-secret
 FLASK_DEBUG=0
 PORT=5000
+DATABASE_URL=postgresql://username:password@host:5432/database_name
 ```
 
 ## Local School Version
