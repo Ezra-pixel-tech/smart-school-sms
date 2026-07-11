@@ -4,10 +4,11 @@ import os
 import secrets
 from datetime import datetime
 from functools import wraps
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, abort, flash, redirect, render_template_string, request, send_from_directory, session, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template_string, request, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import Index, UniqueConstraint, event, text
 from sqlalchemy.engine import Engine
@@ -212,11 +213,38 @@ class SchoolEvent(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
+class Communication(db.Model):
+    __tablename__ = "communications"
+    id = db.Column(db.Integer, primary_key=True)
+    school_id = db.Column(db.Integer, db.ForeignKey("schools.id", ondelete="CASCADE"), nullable=True, index=True)
+    channel = db.Column(db.String(20), nullable=False, index=True)
+    audience = db.Column(db.String(40), nullable=False, index=True)
+    recipient = db.Column(db.String(180), default="")
+    subject = db.Column(db.String(180), default="")
+    message = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(40), default="recorded", nullable=False)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class AuditLog(db.Model):
+    __tablename__ = "audit_logs"
+    id = db.Column(db.Integer, primary_key=True)
+    school_id = db.Column(db.Integer, db.ForeignKey("schools.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    username = db.Column(db.String(100), default="")
+    action = db.Column(db.String(120), nullable=False, index=True)
+    details = db.Column(db.Text, default="")
+    ip_address = db.Column(db.String(80), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 Index("ix_scores_student_period", Score.student_id, Score.term, Score.academic_year)
 Index("ix_users_role_school", User.school_id, User.role)
 Index("ix_students_school_class", Student.school_id, Student.class_id)
 Index("ix_attendance_student_period", Attendance.student_id, Attendance.term, Attendance.academic_year)
 Index("ix_fees_student_period", Fee.student_id, Fee.term, Fee.academic_year)
+Index("ix_audit_school_created", AuditLog.school_id, AuditLog.created_at)
 
 
 @event.listens_for(Engine, "connect")
@@ -263,7 +291,29 @@ def ensure_compatibility_migrations() -> None:
     ]:
         if ddl[0] not in score_columns:
             db.session.execute(text(ddl[1]))
-    if "school_events" not in {row[0] for row in db.session.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}:
+    existing_tables = {row[0] for row in db.session.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
+    if "audit_logs" in existing_tables:
+        audit_columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(audit_logs)")).fetchall()}
+        for ddl in [
+            ("school_id", "ALTER TABLE audit_logs ADD COLUMN school_id INTEGER"),
+            ("user_id", "ALTER TABLE audit_logs ADD COLUMN user_id INTEGER"),
+            ("username", "ALTER TABLE audit_logs ADD COLUMN username VARCHAR(100) DEFAULT ''"),
+            ("details", "ALTER TABLE audit_logs ADD COLUMN details TEXT DEFAULT ''"),
+            ("ip_address", "ALTER TABLE audit_logs ADD COLUMN ip_address VARCHAR(80) DEFAULT ''"),
+        ]:
+            if ddl[0] not in audit_columns:
+                db.session.execute(text(ddl[1]))
+    if "communications" in existing_tables:
+        comm_columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(communications)")).fetchall()}
+        for ddl in [
+            ("school_id", "ALTER TABLE communications ADD COLUMN school_id INTEGER"),
+            ("recipient", "ALTER TABLE communications ADD COLUMN recipient VARCHAR(180) DEFAULT ''"),
+            ("status", "ALTER TABLE communications ADD COLUMN status VARCHAR(40) DEFAULT 'recorded'"),
+            ("created_by", "ALTER TABLE communications ADD COLUMN created_by INTEGER"),
+        ]:
+            if ddl[0] not in comm_columns:
+                db.session.execute(text(ddl[1]))
+    if "school_events" not in existing_tables:
         db.session.execute(text("""
             CREATE TABLE school_events (
                 id INTEGER NOT NULL,
@@ -293,6 +343,18 @@ def current_user():
 def current_school():
     user = current_user()
     return db.session.get(School, user.school_id) if user and user.school_id else None
+
+
+def log_action(action: str, details: str = "") -> None:
+    user = current_user()
+    db.session.add(AuditLog(
+        school_id=user.school_id if user else None,
+        user_id=user.id if user else None,
+        username=user.username if user else "",
+        action=action,
+        details=details,
+        ip_address=request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+    ))
 
 
 def role_label(role: str) -> str:
@@ -391,12 +453,31 @@ BASE_HTML = """
 *{box-sizing:border-box}body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}a{text-decoration:none;color:inherit}.wrap{max-width:1220px;margin:0 auto;padding:0 22px}.topbar{background:linear-gradient(90deg,var(--navy),#071a38);color:#fff;position:sticky;top:0;z-index:5;box-shadow:0 8px 24px rgba(0,0,0,.16)}.nav{min-height:74px;display:flex;align-items:center;justify-content:space-between;gap:18px}.brand{display:flex;align-items:center;gap:12px;font-weight:800}.crest,.crest-fallback{width:44px;height:44px;border-radius:8px}.crest{object-fit:cover;background:#fff;padding:3px}.crest-fallback{background:linear-gradient(135deg,var(--gold),#00bdd6);display:grid;place-items:center;font-weight:900;color:#062653}.navlinks{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.navlinks a,.btn{border:0;border-radius:8px;padding:10px 14px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:8px}.navlinks a{color:#dce9ff}.navlinks a:hover{background:rgba(255,255,255,.12);color:#fff}.btn{background:var(--blue);color:#fff}.btn.green{background:var(--green)}.btn.red{background:var(--red)}.btn.ghost{background:#edf4ff;color:var(--blue)}.btn.purple{background:var(--purple)}
 .hero{min-height:520px;background:linear-gradient(90deg,rgba(6,38,83,.9),rgba(6,38,83,.5)),url('https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=1800&q=80') center/cover;color:white;display:flex;align-items:center}.hero-grid{display:grid;grid-template-columns:minmax(0,1fr) 450px;gap:36px;align-items:center}.hero h1{font-size:52px;line-height:1;margin:0 0 14px}.hero p{font-size:19px;line-height:1.55;max-width:650px;color:#e9f3ff}.module-card{background:white;color:var(--ink);border-radius:8px;padding:24px;box-shadow:var(--shadow);display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.module{border:1px solid var(--line);border-radius:8px;padding:16px}.module strong{display:block;margin-bottom:6px}
 main{padding:28px 0 60px}.grid{display:grid;gap:18px}.cols-4{grid-template-columns:repeat(4,1fr)}.cols-3{grid-template-columns:repeat(3,1fr)}.cols-2{grid-template-columns:repeat(2,1fr)}.card{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:20px;box-shadow:0 8px 22px rgba(15,35,73,.07)}.card h2,.card h3{margin-top:0}.stat{display:flex;justify-content:space-between;align-items:center}.stat b{font-size:28px}.muted{color:var(--muted)}.badge{display:inline-block;border-radius:999px;padding:5px 10px;background:#eaf2ff;color:var(--blue);font-weight:800;font-size:12px}
-form{display:grid;gap:14px}label{font-weight:750;color:#344054;font-size:13px}input,select,textarea{width:100%;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:12px;background:white;color:var(--ink)}textarea{min-height:90px}table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden}th,td{padding:12px;border-bottom:1px solid var(--line);text-align:left;font-size:14px;vertical-align:top}th{background:#eef5ff;color:#173763}.actions{display:flex;gap:8px;flex-wrap:wrap}.layout{display:grid;grid-template-columns:230px 1fr;gap:22px}.side{background:#062653;color:white;border-radius:8px;padding:18px;height:max-content;position:sticky;top:94px}.side a{display:block;padding:11px;border-radius:8px;color:#dce9ff}.side a:hover{background:rgba(255,255,255,.12);color:#fff}.flash{padding:12px 14px;border-radius:8px;margin-bottom:14px}.flash.success{background:#e8f7ef;color:#075d2f}.flash.error{background:#ffefed;color:#9c1f14}.login-shell{min-height:calc(100vh - 74px);display:grid;place-items:center;background:linear-gradient(135deg,#eef6ff,#f9fbff)}.login-card{width:min(460px,92vw)}.report-head{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid var(--navy);padding-bottom:16px;margin-bottom:16px;gap:16px}.report-title{text-align:center}.report-title h2{margin-bottom:4px}.report-title p{margin:3px 0}.report-card{max-width:1060px}.report-crest{width:72px;height:72px}.report-meta p{margin:0}.signature-row{display:grid;grid-template-columns:1fr 220px;gap:24px;align-items:end;margin-top:26px;border-top:1px solid var(--line);padding-top:18px}.signature-img{display:block;max-width:180px;max-height:70px;object-fit:contain;margin:10px 0}.signature-line{height:58px;border-bottom:1px solid var(--ink);max-width:220px;margin-bottom:10px}.slip{max-width:520px;margin:auto;border:2px dashed var(--navy);background:white;padding:26px;border-radius:8px}
+form{display:grid;gap:14px}label{font-weight:750;color:#344054;font-size:13px}input,select,textarea{width:100%;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:12px;background:white;color:var(--ink)}textarea{min-height:90px}table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden}th,td{padding:12px;border-bottom:1px solid var(--line);text-align:left;font-size:14px;vertical-align:top}th{background:#eef5ff;color:#173763}.actions{display:flex;gap:8px;flex-wrap:wrap}.layout{display:grid;grid-template-columns:230px 1fr;gap:22px}.side{background:#062653;color:white;border-radius:8px;padding:18px;height:max-content;position:sticky;top:94px}.side a{display:block;padding:11px;border-radius:8px;color:#dce9ff}.side a:hover{background:rgba(255,255,255,.12);color:#fff}.flash{padding:12px 14px;border-radius:8px;margin-bottom:14px}.flash.success{background:#e8f7ef;color:#075d2f}.flash.error{background:#ffefed;color:#9c1f14}.login-shell{min-height:calc(100vh - 74px);display:grid;place-items:center;background:linear-gradient(135deg,#eef6ff,#f9fbff)}.login-card{width:min(460px,92vw)}.password-wrap{display:flex;gap:8px;align-items:center}.password-wrap input{flex:1}.show-password{margin-top:6px;background:#edf4ff;color:var(--blue);border:1px solid var(--line);border-radius:8px;padding:12px 13px;font-weight:800;cursor:pointer}.report-head{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid var(--navy);padding-bottom:16px;margin-bottom:16px;gap:16px}.report-title{text-align:center}.report-title h2{margin-bottom:4px}.report-title p{margin:3px 0}.report-card{max-width:1060px}.report-crest{width:72px;height:72px}.report-meta p{margin:0}.signature-row{display:grid;grid-template-columns:1fr 220px;gap:24px;align-items:end;margin-top:26px;border-top:1px solid var(--line);padding-top:18px}.signature-img{display:block;max-width:180px;max-height:70px;object-fit:contain;margin:10px 0}.signature-line{height:58px;border-bottom:1px solid var(--ink);max-width:220px;margin-bottom:10px}.slip{max-width:520px;margin:auto;border:2px dashed var(--navy);background:white;padding:26px;border-radius:8px}
 @media(max-width:940px){.hero-grid,.layout,.cols-4,.cols-3,.cols-2{grid-template-columns:1fr}.hero h1{font-size:38px}.module-card{grid-template-columns:1fr}.nav{height:auto;padding:14px 0;align-items:flex-start}.side{position:static}.navlinks{justify-content:flex-end}table{display:block;overflow-x:auto;white-space:nowrap}.report-head{align-items:flex-start}.signature-row{grid-template-columns:1fr}}@media(max-width:620px){.wrap{padding:0 14px}.nav,.report-head{flex-direction:column}.navlinks{justify-content:flex-start}.hero{min-height:560px}.hero h1{font-size:34px}.card{padding:16px}th,td{padding:10px}.btn{width:100%;justify-content:center}.actions .btn{width:auto}}@media print{.topbar,.side,.no-print,.btn{display:none!important}body{background:white}.wrap,main{max-width:none;padding:0}.layout{display:block}.card{box-shadow:none;border:0}.report-card{max-width:none}.slip{border:2px solid #111}table{display:table;white-space:normal}}
 .topbar{background:linear-gradient(90deg,#0a3b50,#123c69 55%,#22543d)}.card{transition:transform .18s ease,box-shadow .18s ease}.card:hover{transform:translateY(-1px);box-shadow:0 14px 30px rgba(14,43,72,.1)}.login-shell{background:linear-gradient(90deg,rgba(6,35,58,.82),rgba(8,74,83,.7)),url('https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1800&q=80') center/cover}.login-card{backdrop-filter:blur(8px);background:rgba(255,255,255,.95)}.login-visual{border-radius:8px;min-height:160px;background:center/cover;margin:-6px -6px 16px}.login-visual.admin{background-image:linear-gradient(0deg,rgba(6,35,58,.18),rgba(6,35,58,.18)),url('https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&w=900&q=80')}.login-visual.teacher{background-image:linear-gradient(0deg,rgba(6,35,58,.18),rgba(6,35,58,.18)),url('https://images.unsplash.com/photo-1588072432836-e10032774350?auto=format&fit=crop&w=900&q=80')}.login-visual.student{background-image:linear-gradient(0deg,rgba(6,35,58,.18),rgba(6,35,58,.18)),url('https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?auto=format&fit=crop&w=900&q=80')}.dashboard-hero{background:linear-gradient(90deg,rgba(10,59,80,.93),rgba(34,84,61,.78)),url('https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1600&q=80') center/cover;color:white;border:0}.dashboard-hero h2{margin:0}.dashboard-hero .muted{color:#e5f2f2}.metric-card{border-left:5px solid var(--teal)}.metric-card b{color:#0a3b50}.progress{height:10px;border-radius:999px;background:#dce8ed;overflow:hidden}.progress span{display:block;height:100%;background:linear-gradient(90deg,var(--teal),var(--green))}.quick-actions a{justify-content:center}.feature-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.feature-strip div{background:#f7fbfd;border:1px solid var(--line);border-radius:8px;padding:14px}@media(max-width:940px){.feature-strip{grid-template-columns:1fr}.login-visual{min-height:130px}}
 </style></head><body>
 <header class="topbar no-print"><div class="wrap nav"><a class="brand" href="{{ url_for('index') }}">{% if school and school.crest %}<img class="crest" src="{{ url_for('uploads', filename=school.crest) }}" alt="crest">{% else %}<span class="crest-fallback">SMS</span>{% endif %}<span><span style="display:block">Smart Schools SMS</span><small>{{ school.name if school else 'School Management System' }}</small></span></a><nav class="navlinks">{% if user %}<a href="{{ url_for('dashboard') }}">Dashboard</a><a href="{{ url_for('logout') }}">Logout</a>{% else %}<a href="{{ url_for('index') }}">Home</a><a href="{{ url_for('register_school') }}">Register School</a><a class="btn" href="{{ url_for('login') }}">Login</a>{% endif %}</nav></div></header>
-{% block body %}{% endblock %}</body></html>
+{% block body %}{% endblock %}<script>
+document.querySelectorAll('input[type="password"]').forEach(function(input) {
+  if (input.dataset.viewReady) return;
+  input.dataset.viewReady = "1";
+  const wrap = document.createElement("span");
+  wrap.className = "password-wrap";
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "show-password";
+  button.textContent = "View";
+  button.addEventListener("click", function() {
+    const showing = input.type === "text";
+    input.type = showing ? "password" : "text";
+    button.textContent = showing ? "View" : "Hide";
+  });
+  wrap.appendChild(button);
+});
+</script></body></html>
 """
 
 
@@ -406,6 +487,7 @@ SIDEBAR = """
 {% if user.role == 'system_admin' %}<a href="{{ url_for('schools') }}">Schools</a>{% endif %}
 {% if user.role in ['school_admin','teacher'] %}<a href="{{ url_for('students') }}">Students</a><a href="{{ url_for('teachers') }}">Teachers</a><a href="{{ url_for('classes_subjects') }}">Classes & Subjects</a><a href="{{ url_for('scores') }}">Scores</a>{% endif %}
 {% if user.role == 'school_admin' %}<a href="{{ url_for('attendance') }}">Attendance</a><a href="{{ url_for('fees') }}">Fees</a><a href="{{ url_for('onboarding') }}">School Profile</a>{% endif %}
+{% if user.role in ['system_admin','school_admin','teacher'] %}<a href="{{ url_for('communications') }}">SMS & Email</a><a href="{{ url_for('audit_logs') }}">Audit Log</a>{% endif %}
 {% if user.role in ['school_admin','teacher','student'] %}<a href="{{ url_for('announcements') }}">Notices</a><a href="{{ url_for('calendar') }}">Calendar</a><a href="{{ url_for('timetable') }}">Timetable</a><a href="{{ url_for('library') }}">Library</a>{% endif %}
 {% if user.role == 'student' %}<a href="{{ url_for('student_results') }}">My Results</a>{% endif %}</aside>
 """
@@ -488,14 +570,47 @@ def register_routes(app: Flask) -> None:
                 session.clear()
                 csrf_token()
                 session["user_id"] = user.id
+                log_action("login", f"{role_label(user.role)} signed in")
+                db.session.commit()
                 flash(f"Welcome back, {user.full_name}.", "success")
                 if user.must_change_password:
                     return redirect(url_for("change_password"))
                 return redirect(url_for("dashboard"))
+            db.session.add(AuditLog(username=request.form.get("username", ""), action="failed_login", details=f"Failed {portal} portal login", ip_address=request.remote_addr or ""))
+            db.session.commit()
             flash("Invalid username, password, or portal.", "error")
         portal_label = {"admin": "Admin Login", "teacher": "Teacher Login", "student": "Student Login"}.get(portal, "Login")
         visual = portal if portal in {"admin", "teacher", "student"} else "admin"
-        return render("""<main class="login-shell"><section class="card login-card"><div class="login-visual {{ visual }}"></div><h2>{{ portal_label }}</h2><p class="muted">Choose the correct portal for your account.</p><div class="actions"><a class="btn ghost" href="{{ url_for('login', portal='admin') }}">Admin</a><a class="btn ghost" href="{{ url_for('login', portal='teacher') }}">Teacher</a><a class="btn ghost" href="{{ url_for('login', portal='student') }}">Student</a></div>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}">{{ field('Username','username', required=true) }}{{ field('Password','password','password', required=true) }}<button class="btn">Login</button></form><p class="muted">Default system admin: <b>admin</b> / <b>admin123</b>. Change it before real use.</p></section></main>""", title=portal_label, portal=portal, portal_label=portal_label, visual=visual)
+        return render("""<main class="login-shell"><section class="card login-card"><div class="login-visual {{ visual }}"></div><h2>{{ portal_label }}</h2><p class="muted">Choose the correct portal for your account.</p><div class="actions"><a class="btn ghost" href="{{ url_for('login', portal='admin') }}">Admin</a><a class="btn ghost" href="{{ url_for('login', portal='teacher') }}">Teacher</a><a class="btn ghost" href="{{ url_for('login', portal='student') }}">Student</a></div>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}">{{ field('Username','username', required=true) }}{{ field('Password','password','password', required=true) }}<button class="btn">Login</button></form><p><a class="btn ghost" href="{{ url_for('reset_password', portal=portal) }}">Reset Password</a></p><p class="muted">Default system admin: <b>admin</b> / <b>admin123</b>. Change it before real use.</p></section></main>""", title=portal_label, portal=portal, portal_label=portal_label, visual=visual)
+
+    @app.route("/reset-password", methods=["GET", "POST"])
+    def reset_password():
+        portal = request.args.get("portal", "admin")
+        if request.method == "POST":
+            validate_csrf()
+            portal = request.form.get("portal", portal)
+            allowed_roles = LOGIN_AUDIENCES.get(portal)
+            username = request.form["username"].strip().lower()
+            contact = request.form["contact"].strip().lower()
+            new_password = request.form.get("new_password", "")
+            confirm_password = request.form.get("confirm_password", "")
+            user = User.query.filter_by(username=username).first()
+            saved_contacts = {user.email.lower(), user.phone.lower()} if user else set()
+            if not user or (allowed_roles and user.role not in allowed_roles) or not contact or contact not in saved_contacts:
+                flash("No matching account and saved contact was found for that portal.", "error")
+            elif len(new_password) < 8:
+                flash("New password must be at least 8 characters.", "error")
+            elif new_password != confirm_password:
+                flash("New passwords do not match.", "error")
+            else:
+                user.password_hash = generate_password_hash(new_password)
+                user.must_change_password = False
+                db.session.add(AuditLog(school_id=user.school_id, user_id=user.id, username=user.username, action="password_reset", details="Self-service password reset", ip_address=request.remote_addr or ""))
+                db.session.commit()
+                flash("Password reset successfully. Please login with the new password.", "success")
+                return redirect(url_for("login", portal=portal))
+        portal_label = {"admin": "Admin", "teacher": "Teacher", "student": "Student"}.get(portal, "Account")
+        return render("""<main class="login-shell"><section class="card login-card"><h2>Reset {{ portal_label }} Password</h2><p class="muted">Enter your username and saved email or phone, then choose a new password.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}">{{ field('Username','username', required=true) }}{{ field('Saved Email or Phone','contact', required=true) }}{{ field('New Password','new_password','password', required=true) }}{{ field('Confirm New Password','confirm_password','password', required=true) }}<button class="btn green">Reset Password</button></form><p><a class="btn ghost" href="{{ url_for('login', portal=portal) }}">Back to Login</a></p></section></main>""", title="Reset Password", portal=portal, portal_label=portal_label)
 
     @app.route("/change-password", methods=["GET", "POST"])
     @login_required()
@@ -514,6 +629,7 @@ def register_routes(app: Flask) -> None:
             else:
                 user.password_hash = generate_password_hash(new_password)
                 user.must_change_password = False
+                log_action("change_password", "User changed password")
                 db.session.commit()
                 flash("Password changed successfully.", "success")
                 return redirect(url_for("dashboard"))
@@ -521,6 +637,9 @@ def register_routes(app: Flask) -> None:
 
     @app.route("/logout")
     def logout():
+        if current_user():
+            log_action("logout", "User signed out")
+            db.session.commit()
         session.clear()
         return redirect(url_for("login"))
 
@@ -843,6 +962,74 @@ def register_routes(app: Flask) -> None:
         rows = LibraryResource.query.filter_by(school_id=sid).order_by(LibraryResource.title).all()
         return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid">{% if user.role == 'school_admin' %}<article class="card"><h2>Library Resources</h2><form method="post" class="grid cols-3">{{ csrf() }}{{ field('Title','title') }}{{ field('Category','category', placeholder='Textbook, Reader, Device') }}{{ field('Location','location', placeholder='Library shelf A') }}{{ field('Copies','copies','number', value='1') }}{{ field('Notes','notes') }}<button class="btn green">Add Resource</button></form></article>{% endif %}<article class="card"><h2>Library Catalogue</h2><table><tr><th>Title</th><th>Category</th><th>Location</th><th>Copies</th><th>Notes</th></tr>{% for r in rows %}<tr><td>{{ r.title }}</td><td>{{ r.category }}</td><td>{{ r.location }}</td><td>{{ r.copies }}</td><td>{{ r.notes }}</td></tr>{% endfor %}</table></article></section></div></main>""", title="Library", rows=rows)
 
+    @app.route("/communications", methods=["GET", "POST"])
+    @login_required("system_admin", "school_admin", "teacher")
+    def communications():
+        user = current_user()
+        if request.method == "POST":
+            db.session.add(Communication(school_id=user.school_id, channel=request.form.get("channel", "sms"), audience=request.form.get("audience", "all"), recipient=request.form.get("recipient", ""), subject=request.form.get("subject", ""), message=request.form["message"], status="recorded", created_by=user.id))
+            log_action("communication_recorded", f"{request.form.get('channel', 'sms')} to {request.form.get('audience', 'all')}")
+            db.session.commit()
+            flash("SMS/email communication recorded.", "success")
+        query = Communication.query
+        if user.role != "system_admin":
+            query = query.filter_by(school_id=user.school_id)
+        rows = query.order_by(Communication.created_at.desc()).limit(60).all()
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>SMS & Email Communication</h2>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}<label>Channel<select name="channel"><option value="sms">SMS</option><option value="email">Email</option></select></label><label>Audience<select name="audience"><option value="all">Everyone</option><option value="student">Students</option><option value="parent">Parents</option><option value="teacher">Teachers</option></select></label>{{ field('Recipient','recipient', placeholder='Phone or email, optional') }}{{ field('Subject','subject') }}<label style="grid-column:1/-1">Message<textarea name="message" required></textarea></label><button class="btn green">Record Message</button></form></article><article class="card"><h2>Recent Communication</h2><table><tr><th>Date</th><th>Channel</th><th>Audience</th><th>Subject</th><th>Status</th></tr>{% for r in rows %}<tr><td>{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ r.channel|upper }}</td><td>{{ r.audience|title }}</td><td>{{ r.subject or r.message[:45] }}</td><td>{{ r.status|title }}</td></tr>{% endfor %}</table></article></section></div></main>""", title="SMS & Email", rows=rows)
+
+    @app.route("/audit-log")
+    @login_required("system_admin", "school_admin", "teacher")
+    def audit_logs():
+        user = current_user()
+        query = AuditLog.query
+        if user.role != "system_admin":
+            query = query.filter_by(school_id=user.school_id)
+        rows = query.order_by(AuditLog.created_at.desc()).limit(100).all()
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="card"><h2>Audit Log</h2><table><tr><th>Date</th><th>User</th><th>Action</th><th>Details</th><th>IP</th></tr>{% for r in rows %}<tr><td>{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ r.username }}</td><td>{{ r.action }}</td><td>{{ r.details }}</td><td>{{ r.ip_address }}</td></tr>{% endfor %}</table></section></div></main>""", title="Audit Log", rows=rows)
+
+    @app.route("/my-results.pdf")
+    @login_required("student")
+    @school_required
+    def student_results_pdf():
+        user = current_user()
+        school = current_school()
+        student = Student.query.filter_by(user_id=user.id).first()
+        rows = db.session.query(Score, Subject).join(Subject, Score.subject_id == Subject.id).filter(Score.student_id == student.id).order_by(Subject.name).all() if student else []
+        buffer = BytesIO()
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        pdf = canvas.Canvas(buffer, pagesize=A4)
+        y = A4[1] - 55
+        pdf.setFont("Helvetica-Bold", 16)
+        pdf.drawString(45, y, school.name)
+        y -= 24
+        pdf.setFont("Helvetica", 11)
+        pdf.drawString(45, y, f"Terminal Report Card - {user.full_name}")
+        y -= 20
+        pdf.drawString(45, y, f"Admission No: {student.admission_no if student else '-'}   Term: {school.term}   Year: {school.academic_year}")
+        y -= 34
+        pdf.setFont("Helvetica-Bold", 10)
+        for x, label in [(45, "Subject"), (215, "Class"), (280, "Exam"), (345, "Total"), (410, "Grade")]:
+            pdf.drawString(x, y, label)
+        y -= 18
+        pdf.setFont("Helvetica", 10)
+        for sc, sub in rows:
+            total = sc.class_score + sc.exam_score
+            if y < 70:
+                pdf.showPage()
+                y = A4[1] - 55
+            pdf.drawString(45, y, sub.name[:28])
+            pdf.drawString(215, y, str(sc.class_score))
+            pdf.drawString(280, y, str(sc.exam_score))
+            pdf.drawString(345, y, str(total))
+            pdf.drawString(410, y, grade(total))
+            y -= 17
+        pdf.save()
+        log_action("download_result_pdf", "Student downloaded result PDF")
+        db.session.commit()
+        buffer.seek(0)
+        return Response(buffer.read(), mimetype="application/pdf", headers={"Content-Disposition": f"attachment; filename={student.admission_no if student else 'student'}_result.pdf"})
+
     @app.route("/my-results")
     @login_required("student")
     @school_required
@@ -858,7 +1045,7 @@ def register_routes(app: Flask) -> None:
         conduct = next((sc.conduct for sc, _ in rows if sc.conduct), "")
         position = next((sc.position for sc, _ in rows if sc.position), "")
         overall = grade_info(average)
-        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="card report-card"><div class="report-head">{% if school.crest %}<img class="crest report-crest" src="{{ url_for('uploads', filename=school.crest) }}" alt="crest">{% endif %}<div class="report-title"><h2>{{ school.name }}</h2><p>{{ school.address }}</p><p>{{ school.motto }}</p><strong>Terminal Report Card</strong></div><button class="btn no-print" onclick="window.print()">Print Result</button></div><div class="grid cols-3 report-meta"><p><b>Student:</b> {{ user.full_name }}</p><p><b>Admission No:</b> {{ student.admission_no if student else '-' }}</p><p><b>Class:</b> {{ student_class.name if student_class else '-' }}</p><p><b>Term:</b> {{ school.term }}</p><p><b>Academic Year:</b> {{ school.academic_year }}</p><p><b>Position:</b> {{ position or '-' }}</p></div><table><tr><th>Subject</th><th>Class Score / 50</th><th>Exam / 50</th><th>Total / 100</th><th>Grade</th><th>Meaning</th><th>Teacher Remarks</th></tr>{% for sc,sub in rows %}{% set subject_total=sc.class_score+sc.exam_score %}{% set info=grade_info(subject_total) %}<tr><td>{{ sub.name }}</td><td>{{ sc.class_score }}</td><td>{{ sc.exam_score }}</td><td>{{ subject_total }}</td><td><b>{{ info.grade }}</b></td><td>{{ info.interpretation }}</td><td>{{ sc.remarks }}</td></tr>{% endfor %}</table><div class="grid cols-4" style="margin-top:18px"><article class="card"><b>Total Marks</b><br>{{ report_total }}</article><article class="card"><b>Average</b><br>{{ average }}%</article><article class="card"><b>Overall Grade</b><br>{{ overall.grade }} - {{ overall.interpretation }}</article><article class="card"><b>Attendance</b><br>{{ attendance.present_days if attendance else 0 }}/{{ attendance.total_days if attendance else 0 }}</article></div><div class="grid cols-3" style="margin-top:18px"><article class="card"><b>Conduct</b><br>{{ conduct or 'Good' }}</article><article class="card"><b>Fee Balance</b><br>{{ ((fees.amount_due - fees.amount_paid) if fees else 0) }}</article><article class="card"><b>Next Term</b><br>{{ school.term }}</article></div><section class="signature-row"><div><b>Head's Signature</b>{% if school.head_signature %}<img class="signature-img" src="{{ url_for('uploads', filename=school.head_signature) }}" alt="signature">{% else %}<div class="signature-line"></div>{% endif %}<p>{{ school.head_name or 'Head of School' }}<br><span class="muted">{{ school.head_title or 'Head of School' }}</span></p></div><div><b>Printed</b><p>{{ now.strftime('%d %B %Y') }}</p></div></section><p class="muted no-print">This report card is printable and responsive for phone, tablet, and desktop viewing.</p></section></div></main>""", title="My Results", student=student, student_class=db.session.get(ClassRoom, student.class_id) if student and student.class_id else None, rows=rows, attendance=attendance, fees=fees, average=average, report_total=total, conduct=conduct, position=position, overall=overall)
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="card report-card"><div class="report-head">{% if school.crest %}<img class="crest report-crest" src="{{ url_for('uploads', filename=school.crest) }}" alt="crest">{% endif %}<div class="report-title"><h2>{{ school.name }}</h2><p>{{ school.address }}</p><p>{{ school.motto }}</p><strong>Terminal Report Card</strong></div><div class="actions no-print"><button class="btn" onclick="window.print()">Print Result</button><a class="btn ghost" href="{{ url_for('student_results_pdf') }}">Download PDF</a></div></div><div class="grid cols-3 report-meta"><p><b>Student:</b> {{ user.full_name }}</p><p><b>Admission No:</b> {{ student.admission_no if student else '-' }}</p><p><b>Class:</b> {{ student_class.name if student_class else '-' }}</p><p><b>Term:</b> {{ school.term }}</p><p><b>Academic Year:</b> {{ school.academic_year }}</p><p><b>Position:</b> {{ position or '-' }}</p></div><article class="card no-print"><h3>Result Graph</h3>{% for sc,sub in rows %}{% set subject_total=sc.class_score+sc.exam_score %}<p><b>{{ sub.name }}</b> {{ subject_total }}%</p><div class="progress"><span style="width:{{ [subject_total,100]|min }}%"></span></div>{% endfor %}</article><table><tr><th>Subject</th><th>Class Score / 50</th><th>Exam / 50</th><th>Total / 100</th><th>Grade</th><th>Meaning</th><th>Teacher Remarks</th></tr>{% for sc,sub in rows %}{% set subject_total=sc.class_score+sc.exam_score %}{% set info=grade_info(subject_total) %}<tr><td>{{ sub.name }}</td><td>{{ sc.class_score }}</td><td>{{ sc.exam_score }}</td><td>{{ subject_total }}</td><td><b>{{ info.grade }}</b></td><td>{{ info.interpretation }}</td><td>{{ sc.remarks }}</td></tr>{% endfor %}</table><div class="grid cols-4" style="margin-top:18px"><article class="card"><b>Total Marks</b><br>{{ report_total }}</article><article class="card"><b>Average</b><br>{{ average }}%</article><article class="card"><b>Overall Grade</b><br>{{ overall.grade }} - {{ overall.interpretation }}</article><article class="card"><b>Attendance</b><br>{{ attendance.present_days if attendance else 0 }}/{{ attendance.total_days if attendance else 0 }}</article></div><div class="grid cols-3" style="margin-top:18px"><article class="card"><b>Conduct</b><br>{{ conduct or 'Good' }}</article><article class="card"><b>Fee Balance</b><br>{{ ((fees.amount_due - fees.amount_paid) if fees else 0) }}</article><article class="card"><b>Next Term</b><br>{{ school.term }}</article></div><section class="signature-row"><div><b>Head's Signature</b>{% if school.head_signature %}<img class="signature-img" src="{{ url_for('uploads', filename=school.head_signature) }}" alt="signature">{% else %}<div class="signature-line"></div>{% endif %}<p>{{ school.head_name or 'Head of School' }}<br><span class="muted">{{ school.head_title or 'Head of School' }}</span></p></div><div><b>Printed</b><p>{{ now.strftime('%d %B %Y') }}</p></div></section><p class="muted no-print">This report card is printable and responsive for phone, tablet, and desktop viewing.</p></section></div></main>""", title="My Results", student=student, student_class=db.session.get(ClassRoom, student.class_id) if student and student.class_id else None, rows=rows, attendance=attendance, fees=fees, average=average, report_total=total, conduct=conduct, position=position, overall=overall)
 
 
 app = create_app()
