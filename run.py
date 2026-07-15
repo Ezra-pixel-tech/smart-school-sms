@@ -593,6 +593,8 @@ BASE_HTML = """
 {%- endmacro %}
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title or 'Smart Schools SMS' }}</title>
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+<link rel="alternate icon" href="{{ url_for('static', filename='favicon.svg') }}">
 <style>
 :root{--ink:#132238;--muted:#667085;--line:#d9e2ee;--bg:#f5f8fc;--paper:#fff;--blue:#0b57d0;--navy:#062653;--teal:#008c8c;--green:#118a45;--gold:#f5ae2f;--red:#c92a2a;--purple:#6d3fc8;--shadow:0 16px 38px rgba(15,35,73,.12)}
 *{box-sizing:border-box}body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}a{text-decoration:none;color:inherit}.wrap{max-width:1220px;margin:0 auto;padding:0 22px}.topbar{background:linear-gradient(90deg,var(--navy),#071a38);color:#fff;position:sticky;top:0;z-index:5;box-shadow:0 8px 24px rgba(0,0,0,.16)}.nav{min-height:74px;display:flex;align-items:center;justify-content:space-between;gap:18px}.brand{display:flex;align-items:center;gap:12px;font-weight:800}.crest,.crest-fallback{width:44px;height:44px;border-radius:8px}.crest{object-fit:cover;background:#fff;padding:3px}.crest-fallback{background:linear-gradient(135deg,var(--gold),#00bdd6);display:grid;place-items:center;font-weight:900;color:#062653}.navlinks{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.navlinks a,.btn{border:0;border-radius:8px;padding:10px 14px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:8px}.navlinks a{color:#dce9ff}.navlinks a:hover{background:rgba(255,255,255,.12);color:#fff}.btn{background:var(--blue);color:#fff}.btn.green{background:var(--green)}.btn.red{background:var(--red)}.btn.ghost{background:#edf4ff;color:var(--blue)}.btn.purple{background:var(--purple)}
@@ -624,6 +626,20 @@ document.querySelectorAll('input[type="password"]').forEach(function(input) {
     button.textContent = showing ? "View" : "Hide";
   });
   wrap.appendChild(button);
+});
+document.querySelectorAll('.terminal .remarks td').forEach(function(cell) {
+  cell.innerHTML = cell.innerHTML.replace(/Fee Balance:\\s*([0-9,.]+)/g, 'Fee Balance: <span class="cedi">GH₵ $1</span>');
+});
+document.querySelectorAll('table').forEach(function(table) {
+  const headings = Array.from(table.querySelectorAll('th')).map(function(heading) { return heading.textContent.trim(); });
+  if (headings.includes('Due') && headings.includes('Paid') && headings.includes('Balance')) {
+    Array.from(table.querySelectorAll('tr')).slice(1).forEach(function(row) {
+      [2, 3, 4].forEach(function(index) {
+        const cell = row.children[index];
+        if (cell && cell.textContent.trim() && !cell.textContent.includes('GH₵')) cell.textContent = 'GH₵ ' + cell.textContent.trim();
+      });
+    });
+  }
 });
 </script></body></html>
 """
