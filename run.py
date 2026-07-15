@@ -70,7 +70,9 @@ class School(db.Model):
     head_name = db.Column(db.String(160), default="")
     head_title = db.Column(db.String(100), default="Head of School")
     head_signature = db.Column(db.String(260), default="")
-    sms_api_url = db.Column(db.String(500), default="")
+    sms_api_url = db.Column(db.String(500), default="https://sms.arkesel.com/api/v2/sms/send")
+    sms_api_key = db.Column(db.String(260), default="")
+    sms_sender_id = db.Column(db.String(40), default="")
     academic_year = db.Column(db.String(40), default="")
     term = db.Column(db.String(40), default="")
     onboarded = db.Column(db.Boolean, default=False, nullable=False)
@@ -121,6 +123,7 @@ class Student(db.Model):
     admission_no = db.Column(db.String(80), nullable=False)
     guardian_name = db.Column(db.String(160), default="")
     guardian_phone = db.Column(db.String(80), default="")
+    guardian_email = db.Column(db.String(160), default="")
     __table_args__ = (UniqueConstraint("school_id", "admission_no", name="uq_student_school_admission"),)
 
 
@@ -272,6 +275,30 @@ def init_db() -> None:
 
 
 def ensure_compatibility_migrations() -> None:
+    if db.engine.dialect.name == "postgresql":
+        for statement in [
+            "ALTER TABLE schools ADD COLUMN IF NOT EXISTS head_name VARCHAR(160) DEFAULT ''",
+            "ALTER TABLE schools ADD COLUMN IF NOT EXISTS head_title VARCHAR(100) DEFAULT 'Head of School'",
+            "ALTER TABLE schools ADD COLUMN IF NOT EXISTS head_signature VARCHAR(260) DEFAULT ''",
+            "ALTER TABLE schools ADD COLUMN IF NOT EXISTS sms_api_url VARCHAR(500) DEFAULT ''",
+            "ALTER TABLE schools ADD COLUMN IF NOT EXISTS sms_api_key VARCHAR(260) DEFAULT ''",
+            "ALTER TABLE schools ADD COLUMN IF NOT EXISTS sms_sender_id VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS guardian_email VARCHAR(160) DEFAULT ''",
+            "ALTER TABLE scores ADD COLUMN IF NOT EXISTS conduct VARCHAR(120) DEFAULT ''",
+            "ALTER TABLE scores ADD COLUMN IF NOT EXISTS position VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS school_id INTEGER",
+            "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_id INTEGER",
+            "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS username VARCHAR(100) DEFAULT ''",
+            "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details TEXT DEFAULT ''",
+            "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(80) DEFAULT ''",
+            "ALTER TABLE communications ADD COLUMN IF NOT EXISTS school_id INTEGER",
+            "ALTER TABLE communications ADD COLUMN IF NOT EXISTS recipient VARCHAR(180) DEFAULT ''",
+            "ALTER TABLE communications ADD COLUMN IF NOT EXISTS status VARCHAR(40) DEFAULT 'recorded'",
+            "ALTER TABLE communications ADD COLUMN IF NOT EXISTS created_by INTEGER",
+        ]:
+            db.session.execute(text(statement))
+        db.session.commit()
+        return
     if db.engine.dialect.name != "sqlite":
         return
     user_columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(users)")).fetchall()}
@@ -283,6 +310,8 @@ def ensure_compatibility_migrations() -> None:
         ("head_title", "ALTER TABLE schools ADD COLUMN head_title VARCHAR(100) DEFAULT 'Head of School'"),
         ("head_signature", "ALTER TABLE schools ADD COLUMN head_signature VARCHAR(260) DEFAULT ''"),
         ("sms_api_url", "ALTER TABLE schools ADD COLUMN sms_api_url VARCHAR(500) DEFAULT ''"),
+        ("sms_api_key", "ALTER TABLE schools ADD COLUMN sms_api_key VARCHAR(260) DEFAULT ''"),
+        ("sms_sender_id", "ALTER TABLE schools ADD COLUMN sms_sender_id VARCHAR(40) DEFAULT ''"),
     ]:
         if ddl[0] not in school_columns:
             db.session.execute(text(ddl[1]))
@@ -293,6 +322,9 @@ def ensure_compatibility_migrations() -> None:
     ]:
         if ddl[0] not in score_columns:
             db.session.execute(text(ddl[1]))
+    student_columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(students)")).fetchall()}
+    if "guardian_email" not in student_columns:
+        db.session.execute(text("ALTER TABLE students ADD COLUMN guardian_email VARCHAR(160) DEFAULT ''"))
     existing_tables = {row[0] for row in db.session.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
     if "audit_logs" in existing_tables:
         audit_columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(audit_logs)")).fetchall()}
@@ -384,6 +416,25 @@ def safe_int(value, default=0):
         return default
 
 
+def audience_recipients(school_id: int, audience: str, channel: str, manual_recipient: str = "") -> list[str]:
+    if manual_recipient.strip():
+        return list(dict.fromkeys(value.strip() for value in manual_recipient.split(",") if value.strip()))
+
+    contact_field = User.phone if channel == "sms" else User.email
+    recipients = []
+    if audience in {"all", "students", "teachers", "users"}:
+        query = User.query.filter_by(school_id=school_id, active=True)
+        if audience == "students":
+            query = query.filter_by(role="student")
+        elif audience == "teachers":
+            query = query.filter_by(role="teacher")
+        recipients.extend(row[0] for row in query.with_entities(contact_field).all() if row[0])
+    if audience in {"all", "parents"}:
+        contact_field = Student.guardian_phone if channel == "sms" else Student.guardian_email
+        recipients.extend(row[0] for row in Student.query.filter_by(school_id=school_id).with_entities(contact_field).all() if row[0])
+    return list(dict.fromkeys(recipients))
+
+
 def deliver_communication(item: Communication) -> str:
     if not item.recipient:
         return "recorded"
@@ -404,14 +455,24 @@ def deliver_communication(item: Communication) -> str:
                     smtp.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASSWORD", ""))
                 smtp.send_message(msg)
             return "sent"
-        school = current_school()
+        school = db.session.get(School, item.school_id) if item.school_id else current_school()
         sms_api_url = school.sms_api_url if school and school.sms_api_url else os.getenv("SMS_API_URL")
         if item.channel == "sms" and sms_api_url:
-            from urllib.parse import urlencode
-            from urllib.request import urlopen
+            from urllib.request import Request, urlopen
 
-            payload = urlencode({"to": item.recipient, "message": item.message}).encode()
-            urlopen(sms_api_url, data=payload, timeout=12).read()
+            sms_api_key = school.sms_api_key if school and school.sms_api_key else os.getenv("SMS_API_KEY", "")
+            sms_sender_id = school.sms_sender_id if school and school.sms_sender_id else os.getenv("SMS_SENDER_ID", "School")
+            if "arkesel.com" in sms_api_url and sms_api_key:
+                import json
+
+                payload = json.dumps({"sender": sms_sender_id[:11], "message": item.message, "recipients": [item.recipient]}).encode()
+                request_data = Request(sms_api_url, data=payload, headers={"api-key": sms_api_key, "Content-Type": "application/json"})
+                urlopen(request_data, timeout=12).read()
+            else:
+                from urllib.parse import urlencode
+
+                payload = urlencode({"to": item.recipient, "message": item.message}).encode()
+                urlopen(sms_api_url, data=payload, timeout=12).read()
             return "sent"
     except Exception as exc:
         return f"failed: {exc.__class__.__name__}"
@@ -542,7 +603,7 @@ form{display:grid;gap:14px}label{font-weight:750;color:#344054;font-size:13px}in
 .topbar{background:linear-gradient(90deg,#0a3b50,#123c69 55%,#22543d)}.card{transition:transform .18s ease,box-shadow .18s ease}.card:hover{transform:translateY(-1px);box-shadow:0 14px 30px rgba(14,43,72,.1)}.login-shell{background:linear-gradient(90deg,rgba(6,35,58,.82),rgba(8,74,83,.7)),url('https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1800&q=80') center/cover}.login-card{backdrop-filter:blur(8px);background:rgba(255,255,255,.95)}.login-visual{border-radius:8px;min-height:160px;background:center/cover;margin:-6px -6px 16px}.login-visual.admin{background-image:linear-gradient(0deg,rgba(6,35,58,.18),rgba(6,35,58,.18)),url('https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&w=900&q=80')}.login-visual.teacher{background-image:linear-gradient(0deg,rgba(6,35,58,.18),rgba(6,35,58,.18)),url('https://images.unsplash.com/photo-1588072432836-e10032774350?auto=format&fit=crop&w=900&q=80')}.login-visual.student{background-image:linear-gradient(0deg,rgba(6,35,58,.18),rgba(6,35,58,.18)),url('https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?auto=format&fit=crop&w=900&q=80')}.dashboard-hero{background:linear-gradient(90deg,rgba(10,59,80,.93),rgba(34,84,61,.78)),url('https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1600&q=80') center/cover;color:white;border:0}.dashboard-hero h2{margin:0}.dashboard-hero .muted{color:#e5f2f2}.metric-card{border-left:5px solid var(--teal)}.metric-card b{color:#0a3b50}.progress{height:10px;border-radius:999px;background:#dce8ed;overflow:hidden}.progress span{display:block;height:100%;background:linear-gradient(90deg,var(--teal),var(--green))}.quick-actions a{justify-content:center}.feature-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.feature-strip div{background:#f7fbfd;border:1px solid var(--line);border-radius:8px;padding:14px}@media(max-width:940px){.feature-strip{grid-template-columns:1fr}.login-visual{min-height:130px}}
 .login-card{width:min(760px,94vw);padding:34px}.login-card h2{font-size:32px}.login-visual{min-height:250px}.report-card.terminal{max-width:920px;background:white;color:#111;border:1px solid #111;box-shadow:none}.terminal .report-top{display:grid;grid-template-columns:90px 1fr 90px;gap:12px;align-items:center;text-align:center}.terminal .report-top img{width:76px;height:76px;object-fit:contain}.terminal h2{font-size:18px;margin:0;text-transform:uppercase}.terminal p{margin:2px 0}.terminal-title{display:inline-block;background:#111;color:#fff;padding:7px 28px;font-weight:800;text-transform:uppercase;margin:8px 0}.terminal-student{text-align:center;font-weight:800;margin:10px 0}.terminal-meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 36px;font-size:12px;margin:10px 0}.terminal table{border-collapse:collapse;border:1px solid #111;box-shadow:none}.terminal th,.terminal td{border:1px solid #111;padding:5px 6px;font-size:11px;color:#111;background:white}.terminal th{text-transform:uppercase;text-align:center}.terminal .subjects td:first-child{text-transform:uppercase}.terminal .remarks td{height:24px}.terminal .signature-line{height:42px;border-bottom:1px solid #111}.terminal .grading-key td,.terminal .grading-key th{text-align:center;font-size:10px}.terminal .no-border{border:0!important}.terminal .powered{font-size:9px;margin-top:18px}
 @media print{.report-card.terminal{border:0!important;padding:0!important}.terminal th,.terminal td{padding:4px 5px!important;font-size:10px!important}.terminal .report-top img{width:70px;height:70px}.terminal h2{font-size:16px}.terminal-title{padding:6px 24px}.terminal .card{border:0!important}}
-.dashboard-hero{background:linear-gradient(115deg,rgba(11,31,58,.98),rgba(15,118,110,.88)),url('https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1600&q=80') center/cover;border-radius:14px;box-shadow:0 18px 42px rgba(11,31,58,.2)}.dashboard-kicker{display:inline-block;margin-bottom:10px;color:#d9fbf5;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.dashboard-kicker.dark{color:#0f766e}.metric-card{border-left-color:#d4a72c;border-radius:12px}.metric-card b{color:#0b1f3a}.card{border-radius:12px}.feature-strip div{background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.22);backdrop-filter:blur(4px)}.feature-strip .muted{color:#d9fbf5}.sms-config{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(320px,1.2fr);gap:24px;align-items:center;border:1px solid #cfe7e3;background:linear-gradient(135deg,#f7fcfb,#eef7f5)}.sms-config h3{color:#0b1f3a;margin:0 0 8px}.sms-config-form{gap:10px}.sms-config-form input{border-color:#a8d5ce;background:#fff}.sms-config-actions{display:flex;gap:12px;align-items:center;justify-content:space-between}.connection-status{border-radius:999px;padding:7px 10px;font-size:12px;font-weight:800}.connection-status.connected{background:#dff7eb;color:#166534}.connection-status.not-connected{background:#fff4d6;color:#8a5b00}@media(max-width:940px){.sms-config{grid-template-columns:1fr}.sms-config-actions{align-items:stretch;flex-direction:column}.sms-config-actions .btn{width:100%}}
+.dashboard-hero{background:linear-gradient(115deg,rgba(11,31,58,.98),rgba(15,118,110,.88)),url('https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1600&q=80') center/cover;border-radius:14px;box-shadow:0 18px 42px rgba(11,31,58,.2)}.dashboard-kicker{display:inline-block;margin-bottom:10px;color:#d9fbf5;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.dashboard-kicker.dark{color:#0f766e}.metric-card{border-left-color:#d4a72c;border-radius:12px}.metric-card b{color:#0b1f3a}.card{border-radius:12px}.feature-strip div{background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.22);backdrop-filter:blur(4px)}.feature-strip .muted{color:#d9fbf5}.sms-config{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(320px,1.2fr);gap:24px;align-items:center;border:1px solid #cfe7e3;background:linear-gradient(135deg,#f7fcfb,#eef7f5)}.sms-config h3{color:#0b1f3a;margin:0 0 8px}.sms-config-form{gap:10px}.sms-config-form input{border-color:#a8d5ce;background:#fff}.sms-config-actions{display:flex;gap:12px;align-items:center;justify-content:space-between}.connection-status{border-radius:999px;padding:7px 10px;font-size:12px;font-weight:800}.connection-status.connected{background:#dff7eb;color:#166534}.connection-status.not-connected{background:#fff4d6;color:#8a5b00}.terminal{border-top:8px solid #0f766e!important}.terminal .report-top{border-bottom:2px solid #d4a72c;padding-bottom:10px}.terminal .terminal-title{background:linear-gradient(90deg,#0b1f3a,#0f766e)!important}.terminal th{background:#0b1f3a!important;color:#fff!important}.terminal .remarks tr:nth-child(even) td{background:#f0fdfa!important}.terminal .grading-key th{background:#0f766e!important;color:#fff!important}.terminal .grading-key td{background:#fffbeb!important}.cedi{font-weight:800;color:#0f766e}@media(max-width:940px){.sms-config{grid-template-columns:1fr}.sms-config-actions{align-items:stretch;flex-direction:column}.sms-config-actions .btn{width:100%}}
 </style></head><body>
 <header class="topbar no-print"><div class="wrap nav"><a class="brand" href="{{ url_for('index') }}">{% if school and school.crest %}<img class="crest" src="{{ url_for('uploads', filename=school.crest) }}" alt="crest">{% else %}<span class="crest-fallback">SMS</span>{% endif %}<span><span style="display:block">Smart Schools SMS</span><small>{{ school.name if school else 'School Management System' }}</small></span></a><nav class="navlinks">{% if user %}<a href="{{ url_for('dashboard') }}">Dashboard</a><a href="{{ url_for('logout') }}">Logout</a>{% else %}<a href="{{ url_for('index') }}">Home</a><a href="{{ url_for('register_school') }}">Register School</a><a class="btn" href="{{ url_for('login') }}">Login</a>{% endif %}</nav></div></header>
 {% block body %}{% endblock %}<script>
@@ -877,7 +938,7 @@ def register_routes(app: Flask) -> None:
                         new_user = User(school_id=sid, role="student", full_name=request.form["full_name"].strip(), username=request.form["username"].strip().lower(), password_hash=generate_password_hash(password), must_change_password=True)
                         db.session.add(new_user)
                         db.session.flush()
-                        db.session.add(Student(school_id=sid, user_id=new_user.id, class_id=class_ids[0], admission_no=request.form["admission_no"].strip().upper(), guardian_name=request.form.get("guardian_name", ""), guardian_phone=request.form.get("guardian_phone", "")))
+                        db.session.add(Student(school_id=sid, user_id=new_user.id, class_id=class_ids[0], admission_no=request.form["admission_no"].strip().upper(), guardian_name=request.form.get("guardian_name", ""), guardian_phone=request.form.get("guardian_phone", ""), guardian_email=request.form.get("guardian_email", "")))
                         db.session.commit()
                         create_login_slip(new_user, password)
                         return redirect(url_for("login_slip"))
@@ -1144,12 +1205,21 @@ def register_routes(app: Flask) -> None:
     def communications():
         user = current_user()
         if request.method == "POST":
-            item = Communication(school_id=user.school_id, channel=request.form.get("channel", "sms"), audience=request.form.get("audience", "all"), recipient=request.form.get("recipient", ""), subject=request.form.get("subject", ""), message=request.form["message"], status="recorded", created_by=user.id)
-            item.status = deliver_communication(item)
-            db.session.add(item)
-            log_action("communication_recorded", f"{request.form.get('channel', 'sms')} to {request.form.get('audience', 'all')}")
+            channel = request.form.get("channel", "sms")
+            audience = request.form.get("audience", "all")
+            recipients = audience_recipients(user.school_id, audience, channel, request.form.get("recipient", ""))
+            if not recipients:
+                flash("No matching contacts found. Add phone numbers or email addresses before sending.", "error")
+                return redirect(url_for("communications"))
+            sent_count = 0
+            for recipient in recipients:
+                item = Communication(school_id=user.school_id, channel=channel, audience=audience, recipient=recipient, subject=request.form.get("subject", ""), message=request.form["message"], status="queued", created_by=user.id)
+                item.status = deliver_communication(item)
+                sent_count += item.status == "sent"
+                db.session.add(item)
+            log_action("bulk_communication", f"{channel} to {audience}: {len(recipients)} recipients")
             db.session.commit()
-            flash("SMS/email communication recorded.", "success")
+            flash(f"Message processed for {len(recipients)} recipient(s); {sent_count} sent through the configured service.", "success")
         query = Communication.query
         if user.role != "system_admin":
             query = query.filter_by(school_id=user.school_id)
