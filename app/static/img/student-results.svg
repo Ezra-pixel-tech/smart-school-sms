@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 320" role="img" aria-label="Student results illustration">
+  <rect width="420" height="320" rx="22" fill="#f2fbf6"/>
+  <circle cx="112" cy="96" r="42" fill="#1976d2"/>
+  <path d="M50 238c10-56 38-84 84-84s74 28 84 84" fill="#d8ecff"/>
+  <rect x="210" y="56" width="154" height="208" rx="16" fill="#ffffff" stroke="#c9ddf2" stroke-width="3"/>
+  <path d="M240 96h84M240 132h94M240 168h64" stroke="#607d8b" stroke-width="12" stroke-linecap="round"/>
+  <rect x="240" y="206" width="28" height="36" rx="6" fill="#1976d2"/>
+  <rect x="282" y="184" width="28" height="58" rx="6" fill="#2e7d32"/>
+  <rect x="324" y="154" width="28" height="88" rx="6" fill="#f9a825"/>
+  <path d="M88 96c10 12 38 12 48 0" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>
+</svg>

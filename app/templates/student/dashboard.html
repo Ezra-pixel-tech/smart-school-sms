@@ -1,0 +1,33 @@
+{% extends "layouts/base.html" %}
+{% block title %}Student Dashboard{% endblock %}
+{% block content %}
+<section class="dashboard student-view">
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Student portal</p>
+            <h1>{{ current_user.display_name }}</h1>
+            <p>View results, print your report, or download a PDF copy.</p>
+        </div>
+        <img src="{{ url_for('static', filename='img/student-results.svg') }}" alt="Student results illustration">
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card"><span>Subjects</span><strong>{{ scores|length }}</strong></div>
+        <div class="stat-card"><span>Average</span><strong>{{ average }}</strong></div>
+        <div class="stat-card"><span>Term</span><strong>{{ school.term if school else "-" }}</strong></div>
+        <div class="stat-card"><span>Year</span><strong>{{ school.academic_year if school else "-" }}</strong></div>
+    </div>
+
+    <section class="panel">
+        <div class="panel-heading">
+            <h2>My results</h2>
+            <span>{{ generated_at }}</span>
+        </div>
+        <div class="action-row">
+            <a class="small-btn" href="{{ url_for('auth.student_report') }}">Open printable report</a>
+            <a class="small-btn secondary" href="{{ url_for('auth.student_report_pdf') }}">Download PDF</a>
+        </div>
+        {% include "student/report_table.html" %}
+    </section>
+</section>
+{% endblock %}

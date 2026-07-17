@@ -1,0 +1,144 @@
+{% extends "layouts/base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<section class="dashboard">
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">{{ school.name if school else "Smart Schools SMS" }}</p>
+            <h1>School dashboard</h1>
+        </div>
+        <img src="{{ url_for('static', filename='img/school-dashboard.svg') }}" alt="School dashboard illustration">
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card"><span>Students</span><strong>{{ students|length }}</strong></div>
+        <div class="stat-card"><span>Users</span><strong>{{ users|length }}</strong></div>
+        <div class="stat-card"><span>Scores</span><strong>{{ scores|length }}</strong></div>
+        <div class="stat-card"><span>Messages</span><strong>{{ communications|length }}</strong></div>
+    </div>
+
+    <div class="content-grid">
+        <section class="panel">
+            <div class="panel-heading">
+                <h2>Result analytics</h2>
+                <span>Subject averages</span>
+            </div>
+            <canvas id="resultChart" height="180"></canvas>
+        </section>
+
+        <section class="panel">
+            <div class="panel-heading">
+                <h2>Communication</h2>
+                <span>SMS and email record</span>
+            </div>
+            <form class="stacked-form" method="POST" action="{{ url_for('auth.create_communication') }}">
+                <div class="inline-fields">
+                    <select name="channel">
+                        <option value="sms">SMS</option>
+                        <option value="email">Email</option>
+                    </select>
+                    <select name="audience">
+                        <option value="all">All</option>
+                        <option value="students">Students</option>
+                        <option value="parents">Parents</option>
+                        <option value="teachers">Teachers</option>
+                    </select>
+                </div>
+                <input name="recipient" placeholder="Recipient phone or email">
+                <input name="subject" placeholder="Subject">
+                <textarea name="message" rows="4" placeholder="Type message" required></textarea>
+                <button type="submit">Record message</button>
+            </form>
+        </section>
+    </div>
+
+    <section class="panel">
+        <div class="panel-heading">
+            <h2>Students</h2>
+            <span>Print login slips and view reports</span>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Admission No</th>
+                        <th>Class</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for student in students %}
+                    <tr>
+                        <td>{{ student.user.display_name }}</td>
+                        <td>{{ student.admission_no }}</td>
+                        <td>{{ student.class_group.name if student.class_group else "Not assigned" }}</td>
+                        <td class="action-row">
+                            <a class="small-btn" href="{{ url_for('auth.login_slip', student_id=student.id) }}">Print login slip</a>
+                            <a class="small-btn secondary" href="{{ url_for('auth.student_report', student_id=student.id) }}">View report</a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4">No students found yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <div class="content-grid">
+        <section class="panel">
+            <div class="panel-heading">
+                <h2>Recent messages</h2>
+                <span>Recorded communication</span>
+            </div>
+            <ul class="activity-list">
+                {% for item in communications %}
+                <li><strong>{{ item.channel|upper }}</strong> {{ item.audience }} - {{ item.subject or item.message[:40] }}</li>
+                {% else %}
+                <li>No messages recorded yet.</li>
+                {% endfor %}
+            </ul>
+        </section>
+
+        <section class="panel">
+            <div class="panel-heading">
+                <h2>Audit log</h2>
+                <span>Latest system actions</span>
+            </div>
+            <ul class="activity-list">
+                {% for audit in audits %}
+                <li><strong>{{ audit.action }}</strong> {{ audit.username }} <span>{{ audit.created_at }}</span></li>
+                {% else %}
+                <li>No audit activity yet.</li>
+                {% endfor %}
+            </ul>
+        </section>
+    </div>
+</section>
+<script>
+const labels = {{ chart_labels|tojson }};
+const values = {{ chart_values|tojson }};
+const canvas = document.getElementById("resultChart");
+const ctx = canvas.getContext("2d");
+const max = Math.max(100, ...values, 1);
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+labels.forEach(function(label, index) {
+    const barWidth = 42;
+    const gap = 28;
+    const x = 28 + index * (barWidth + gap);
+    const height = (values[index] / max) * 130;
+    const y = 150 - height;
+    ctx.fillStyle = "#1976d2";
+    ctx.fillRect(x, y, barWidth, height);
+    ctx.fillStyle = "#263238";
+    ctx.font = "12px Arial";
+    ctx.fillText(values[index], x + 6, y - 8);
+    ctx.save();
+    ctx.translate(x + 5, 172);
+    ctx.rotate(-0.5);
+    ctx.fillText(label.slice(0, 12), 0, 0);
+    ctx.restore();
+});
+</script>
+{% endblock %}

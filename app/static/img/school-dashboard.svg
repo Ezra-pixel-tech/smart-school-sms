@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 360" role="img" aria-label="School dashboard illustration">
+  <rect width="520" height="360" rx="24" fill="#eef6ff"/>
+  <rect x="46" y="52" width="428" height="256" rx="18" fill="#ffffff" stroke="#c9ddf2" stroke-width="3"/>
+  <rect x="74" y="82" width="150" height="54" rx="10" fill="#1976d2"/>
+  <rect x="244" y="82" width="92" height="54" rx="10" fill="#2e7d32"/>
+  <rect x="356" y="82" width="90" height="54" rx="10" fill="#f9a825"/>
+  <rect x="76" y="166" width="368" height="16" rx="8" fill="#d7e7f7"/>
+  <rect x="76" y="198" width="270" height="16" rx="8" fill="#d7e7f7"/>
+  <rect x="76" y="230" width="324" height="16" rx="8" fill="#d7e7f7"/>
+  <circle cx="142" cy="282" r="26" fill="#1976d2"/>
+  <circle cx="206" cy="282" r="26" fill="#2e7d32"/>
+  <circle cx="270" cy="282" r="26" fill="#f9a825"/>
+  <path d="M118 277h48m16 8h48m16-13h48" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+  <path d="M102 108h92M265 108h50M374 108h52" stroke="#ffffff" stroke-width="9" stroke-linecap="round"/>
+</svg>

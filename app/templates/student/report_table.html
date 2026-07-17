@@ -1,0 +1,28 @@
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Subject</th>
+                <th>Class score</th>
+                <th>Exam score</th>
+                <th>Total</th>
+                <th>Grade</th>
+                <th>Remarks</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for score in scores %}
+            <tr>
+                <td>{{ score.subject.name if score.subject else "Subject" }}</td>
+                <td>{{ score.class_score or 0 }}</td>
+                <td>{{ score.exam_score or 0 }}</td>
+                <td>{{ score.total }}</td>
+                <td>{{ score.grade }}</td>
+                <td>{{ score.remarks or "-" }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">No results have been published yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

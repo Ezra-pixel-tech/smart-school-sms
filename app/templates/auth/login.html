@@ -1,0 +1,41 @@
+{% extends "layouts/base.html" %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<section class="auth-page">
+    <div class="auth-visual">
+        <img src="{{ url_for('static', filename='img/school-dashboard.svg') }}" alt="Students and school dashboard">
+        <h1>Welcome back</h1>
+        <p>Admin, teachers, and students can sign in from one secure place.</p>
+    </div>
+    <div class="login-container">
+        <h2>Sign in</h2>
+        <form method="POST">
+            <label>
+                Username
+                <input type="text" name="username" placeholder="Enter username" required>
+            </label>
+            <label>
+                Password
+                <span class="password-row">
+                    <input id="password" type="password" name="password" placeholder="Enter password" required>
+                    <button class="ghost-btn" type="button" data-toggle-password="password">View</button>
+                </span>
+            </label>
+            <button type="submit">Login</button>
+        </form>
+        <div class="form-links">
+            <a href="{{ url_for('auth.reset_password') }}">Reset password</a>
+        </div>
+    </div>
+</section>
+<script>
+document.querySelectorAll("[data-toggle-password]").forEach(function(button) {
+    button.addEventListener("click", function() {
+        const field = document.getElementById(button.dataset.togglePassword);
+        const showing = field.type === "text";
+        field.type = showing ? "password" : "text";
+        button.textContent = showing ? "View" : "Hide";
+    });
+});
+</script>
+{% endblock %}

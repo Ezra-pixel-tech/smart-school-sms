@@ -1,0 +1,26 @@
+{% extends "layouts/base.html" %}
+{% block title %}Student Login Slip{% endblock %}
+{% block content %}
+<section class="print-page">
+    <div class="login-slip">
+        <div class="slip-head">
+            <img src="{{ url_for('static', filename='img/student-results.svg') }}" alt="Student login">
+            <div>
+                <h1>{{ school.name if school else "Smart Schools SMS" }}</h1>
+                <p>Student login slip</p>
+            </div>
+        </div>
+        <div class="slip-body">
+            <p><span>Student</span><strong>{{ student.user.display_name }}</strong></p>
+            <p><span>Admission No</span><strong>{{ student.admission_no }}</strong></p>
+            <p><span>Username</span><strong>{{ student.user.username }}</strong></p>
+            <p><span>Temporary password</span><strong>Reset before issuing if unknown</strong></p>
+        </div>
+        <p class="slip-note">For safety, print this slip after setting or resetting the student's password.</p>
+        <div class="report-actions no-print">
+            <button type="button" onclick="window.print()">Print slip</button>
+            <a class="small-btn secondary" href="{{ url_for('auth.dashboard') }}">Back to dashboard</a>
+        </div>
+    </div>
+</section>
+{% endblock %}

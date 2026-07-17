@@ -1,0 +1,34 @@
+{% extends "layouts/base.html" %}
+{% block title %}Result Report{% endblock %}
+{% block content %}
+<section class="print-page">
+    <div class="report-sheet">
+        <div class="report-header">
+            <div>
+                <h1>{{ school.name if school else "Smart Schools SMS" }}</h1>
+                <p>{{ school.address if school else "" }}</p>
+                <p>{{ school.phone if school else "" }} {{ school.email if school else "" }}</p>
+            </div>
+            <img src="{{ url_for('static', filename='img/student-results.svg') }}" alt="Student report">
+        </div>
+
+        {% if student %}
+        <div class="report-meta">
+            <div><span>Student</span><strong>{{ student.user.display_name }}</strong></div>
+            <div><span>Admission No</span><strong>{{ student.admission_no }}</strong></div>
+            <div><span>Class</span><strong>{{ student.class_group.name if student.class_group else "Not assigned" }}</strong></div>
+            <div><span>Average</span><strong>{{ average }}</strong></div>
+        </div>
+
+        {% include "student/report_table.html" %}
+
+        <div class="report-actions no-print">
+            <button type="button" onclick="window.print()">Print report</button>
+            <a class="small-btn secondary" href="{{ url_for('auth.student_report_pdf', student_id=student.id) }}">Download PDF</a>
+        </div>
+        {% else %}
+        <p>No student profile is available.</p>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}
