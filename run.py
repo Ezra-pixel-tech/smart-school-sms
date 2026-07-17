@@ -26,7 +26,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 db = SQLAlchemy()
 
 LOGIN_AUDIENCES = {
-    "admin": {"system_admin", "school_admin"},
+    "admin": {"system_admin", "school_admin", "accountant", "registrar"},
     "teacher": {"teacher"},
     "student": {"student"},
 }
@@ -70,7 +70,7 @@ class School(db.Model):
     head_name = db.Column(db.String(160), default="")
     head_title = db.Column(db.String(100), default="Head of School")
     head_signature = db.Column(db.String(260), default="")
-    sms_api_url = db.Column(db.String(500), default="https://sms.arkesel.com/api/v2/sms/send")
+    sms_api_url = db.Column(db.String(500), default="https://sms.nalosolutions.com/smsbackend/Resl_Nalo/send-message/")
     sms_api_key = db.Column(db.String(260), default="")
     sms_sender_id = db.Column(db.String(40), default="")
     academic_year = db.Column(db.String(40), default="")
@@ -112,6 +112,17 @@ class Subject(db.Model):
     code = db.Column(db.String(40), default="")
     teacher_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     __table_args__ = (UniqueConstraint("school_id", "name", name="uq_subject_school_name"),)
+
+
+class TeacherAssignment(db.Model):
+    __tablename__ = "teacher_assignments"
+    id = db.Column(db.Integer, primary_key=True)
+    school_id = db.Column(db.Integer, db.ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    teacher_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    class_id = db.Column(db.Integer, db.ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = db.Column(db.Integer, db.ForeignKey("subjects.id", ondelete="CASCADE"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("teacher_id", "class_id", "subject_id", name="uq_teacher_class_subject"),)
 
 
 class Student(db.Model):
@@ -297,6 +308,16 @@ def ensure_compatibility_migrations() -> None:
             "ALTER TABLE communications ADD COLUMN IF NOT EXISTS created_by INTEGER",
         ]:
             db.session.execute(text(statement))
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS teacher_assignments (
+                id SERIAL PRIMARY KEY, school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+                teacher_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+                subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_teacher_class_subject UNIQUE (teacher_id, class_id, subject_id)
+            )
+        """))
         db.session.commit()
         return
     if db.engine.dialect.name != "sqlite":
@@ -366,6 +387,23 @@ def ensure_compatibility_migrations() -> None:
         db.session.execute(text("CREATE INDEX ix_school_events_school_id ON school_events (school_id)"))
         db.session.execute(text("CREATE INDEX ix_school_events_event_date ON school_events (event_date)"))
         db.session.execute(text("CREATE INDEX ix_school_events_audience ON school_events (audience)"))
+    if "teacher_assignments" not in existing_tables:
+        db.session.execute(text("""
+            CREATE TABLE teacher_assignments (
+                id INTEGER NOT NULL PRIMARY KEY, school_id INTEGER NOT NULL,
+                teacher_id INTEGER NOT NULL, class_id INTEGER NOT NULL, subject_id INTEGER,
+                created_at DATETIME NOT NULL,
+                FOREIGN KEY(school_id) REFERENCES schools(id) ON DELETE CASCADE,
+                FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+                UNIQUE(teacher_id, class_id, subject_id)
+            )
+        """))
+    db.session.execute(text("""
+        INSERT OR IGNORE INTO teacher_assignments (school_id, teacher_id, class_id, subject_id, created_at)
+        SELECT school_id, teacher_id, id, NULL, CURRENT_TIMESTAMP FROM classes WHERE teacher_id IS NOT NULL
+    """))
     db.session.commit()
 
 
@@ -460,14 +498,16 @@ def deliver_communication(item: Communication) -> str:
         if item.channel == "sms" and sms_api_url:
             from urllib.request import Request, urlopen
 
-            sms_api_key = school.sms_api_key if school and school.sms_api_key else os.getenv("SMS_API_KEY", "")
-            sms_sender_id = school.sms_sender_id if school and school.sms_sender_id else os.getenv("SMS_SENDER_ID", "School")
-            if "arkesel.com" in sms_api_url and sms_api_key:
-                import json
+            sms_sender_id = school.sms_sender_id if school and school.sms_sender_id else os.getenv("NALO_SMS_SENDER_ID", os.getenv("SMS_SENDER_ID", "School"))
+            if "nalosolutions.com" in sms_api_url:
+                from urllib.parse import urlencode
 
-                payload = json.dumps({"sender": sms_sender_id[:11], "message": item.message, "recipients": [item.recipient]}).encode()
-                request_data = Request(sms_api_url, data=payload, headers={"api-key": sms_api_key, "Content-Type": "application/json"})
-                urlopen(request_data, timeout=12).read()
+                username = os.getenv("NALO_SMS_USERNAME", "")
+                password = os.getenv("NALO_SMS_PASSWORD", "")
+                if not username or not password:
+                    return "failed: Nalo credentials missing"
+                payload = urlencode({"username": username, "password": password, "msisdn": item.recipient, "message": item.message, "sender_id": sms_sender_id[:11]}).encode()
+                urlopen(Request(sms_api_url, data=payload), timeout=12).read()
             else:
                 from urllib.parse import urlencode
 
@@ -496,7 +536,7 @@ def delete_school_records(school_id: int) -> None:
 
 
 def role_label(role: str) -> str:
-    return {"system_admin": "System Admin", "school_admin": "School Admin", "teacher": "Teacher", "student": "Student"}.get(role, role.title())
+    return {"system_admin": "System Admin", "school_admin": "School Admin", "accountant": "Accountant", "registrar": "Registrar", "teacher": "Teacher", "student": "Student"}.get(role, role.title())
 
 
 def login_required(*roles):
@@ -583,7 +623,17 @@ def get_school_student_query(school_id):
 def teacher_class_ids(user: User) -> list[int]:
     if not user or user.role != "teacher":
         return []
-    return [row[0] for row in db.session.query(ClassRoom.id).filter_by(school_id=user.school_id, teacher_id=user.id).all()]
+    assigned = db.session.query(TeacherAssignment.class_id).filter_by(school_id=user.school_id, teacher_id=user.id)
+    legacy = db.session.query(ClassRoom.id).filter_by(school_id=user.school_id, teacher_id=user.id)
+    return list({row[0] for row in assigned.union(legacy).all()})
+
+
+def teacher_subject_ids(user: User) -> list[int]:
+    if not user or user.role != "teacher":
+        return []
+    assigned = db.session.query(TeacherAssignment.subject_id).filter_by(school_id=user.school_id, teacher_id=user.id).filter(TeacherAssignment.subject_id.isnot(None))
+    legacy = db.session.query(Subject.id).filter_by(school_id=user.school_id, teacher_id=user.id)
+    return list({row[0] for row in assigned.union(legacy).all()})
 
 
 BASE_HTML = """
@@ -606,6 +656,7 @@ form{display:grid;gap:14px}label{font-weight:750;color:#344054;font-size:13px}in
 .login-card{width:min(760px,94vw);padding:34px}.login-card h2{font-size:32px}.login-visual{min-height:250px}.report-card.terminal{max-width:920px;background:white;color:#111;border:1px solid #111;box-shadow:none}.terminal .report-top{display:grid;grid-template-columns:90px 1fr 90px;gap:12px;align-items:center;text-align:center}.terminal .report-top img{width:76px;height:76px;object-fit:contain}.terminal h2{font-size:18px;margin:0;text-transform:uppercase}.terminal p{margin:2px 0}.terminal-title{display:inline-block;background:#111;color:#fff;padding:7px 28px;font-weight:800;text-transform:uppercase;margin:8px 0}.terminal-student{text-align:center;font-weight:800;margin:10px 0}.terminal-meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 36px;font-size:12px;margin:10px 0}.terminal table{border-collapse:collapse;border:1px solid #111;box-shadow:none}.terminal th,.terminal td{border:1px solid #111;padding:5px 6px;font-size:11px;color:#111;background:white}.terminal th{text-transform:uppercase;text-align:center}.terminal .subjects td:first-child{text-transform:uppercase}.terminal .remarks td{height:24px}.terminal .signature-line{height:42px;border-bottom:1px solid #111}.terminal .grading-key td,.terminal .grading-key th{text-align:center;font-size:10px}.terminal .no-border{border:0!important}.terminal .powered{font-size:9px;margin-top:18px}
 @media print{.report-card.terminal{border:0!important;padding:0!important}.terminal th,.terminal td{padding:4px 5px!important;font-size:10px!important}.terminal .report-top img{width:70px;height:70px}.terminal h2{font-size:16px}.terminal-title{padding:6px 24px}.terminal .card{border:0!important}}
 .dashboard-hero{background:linear-gradient(115deg,rgba(11,31,58,.98),rgba(15,118,110,.88)),url('https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1600&q=80') center/cover;border-radius:14px;box-shadow:0 18px 42px rgba(11,31,58,.2)}.dashboard-kicker{display:inline-block;margin-bottom:10px;color:#d9fbf5;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.dashboard-kicker.dark{color:#0f766e}.metric-card{border-left-color:#d4a72c;border-radius:12px}.metric-card b{color:#0b1f3a}.card{border-radius:12px}.feature-strip div{background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.22);backdrop-filter:blur(4px)}.feature-strip .muted{color:#d9fbf5}.sms-config{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(320px,1.2fr);gap:24px;align-items:center;border:1px solid #cfe7e3;background:linear-gradient(135deg,#f7fcfb,#eef7f5)}.sms-config h3{color:#0b1f3a;margin:0 0 8px}.sms-config-form{gap:10px}.sms-config-form input{border-color:#a8d5ce;background:#fff}.sms-config-actions{display:flex;gap:12px;align-items:center;justify-content:space-between}.connection-status{border-radius:999px;padding:7px 10px;font-size:12px;font-weight:800}.connection-status.connected{background:#dff7eb;color:#166534}.connection-status.not-connected{background:#fff4d6;color:#8a5b00}.terminal{border-top:8px solid #0f766e!important}.terminal .report-top{border-bottom:2px solid #d4a72c;padding-bottom:10px}.terminal .terminal-title{background:linear-gradient(90deg,#0b1f3a,#0f766e)!important}.terminal th{background:#0b1f3a!important;color:#fff!important}.terminal .remarks tr:nth-child(even) td{background:#f0fdfa!important}.terminal .grading-key th{background:#0f766e!important;color:#fff!important}.terminal .grading-key td{background:#fffbeb!important}.cedi{font-weight:800;color:#0f766e}@media(max-width:940px){.sms-config{grid-template-columns:1fr}.sms-config-actions{align-items:stretch;flex-direction:column}.sms-config-actions .btn{width:100%}}
+.layout{align-items:start}.side{border-radius:18px;background:linear-gradient(180deg,#071b3b,#08274d 55%,#063257);box-shadow:0 18px 44px rgba(3,17,43,.28)}.side strong{font-size:15px;letter-spacing:.01em}.side a{position:relative;margin:4px 0;padding:11px 12px;font-size:13px;font-weight:700;transition:all .2s ease}.side a:before{content:'›';display:inline-block;margin-right:9px;color:#7dd3fc;font-size:18px;line-height:10px}.side a:hover{transform:translateX(3px);background:linear-gradient(90deg,#2563eb,#3b82f6);box-shadow:0 8px 18px rgba(37,99,235,.34)}.dashboard-hero{min-height:180px;padding:28px!important}.dashboard-hero h2{font-size:29px;letter-spacing:-.04em}.dashboard-hero:after{content:'';position:absolute;right:42px;top:30px;width:120px;height:120px;border:1px solid rgba(255,255,255,.22);border-radius:50%;box-shadow:24px 28px 0 -1px rgba(255,255,255,.08),50px 0 0 -1px rgba(255,255,255,.06)}.dashboard-hero{position:relative;overflow:hidden}.dashboard-hero>*{position:relative;z-index:1}.metric-card{position:relative;overflow:hidden;min-height:112px;border-left:0!important;padding:18px!important;color:#fff!important}.metric-card span,.metric-card b{color:#fff!important}.metric-card:after{content:'';position:absolute;right:-18px;bottom:-42px;width:100px;height:100px;border-radius:50%;background:rgba(255,255,255,.13)}.dashboard-hero + .grid .metric-card:nth-child(1){background:linear-gradient(135deg,#2563eb,#4f46e5)}.dashboard-hero + .grid .metric-card:nth-child(2){background:linear-gradient(135deg,#0f766e,#14b8a6)}.dashboard-hero + .grid .metric-card:nth-child(3){background:linear-gradient(135deg,#7c3aed,#a855f7)}.dashboard-hero + .grid .metric-card:nth-child(4){background:linear-gradient(135deg,#ea580c,#f59e0b)}.metric-card .progress{background:rgba(255,255,255,.25)}.metric-card .progress span{background:#fff}.card{box-shadow:0 10px 28px rgba(15,23,42,.06)}.card:hover{box-shadow:0 18px 38px rgba(15,23,42,.1)}.quick-actions .btn{border:1px solid #dbeafe;background:#f8fbff;color:#1d4ed8}.quick-actions .btn:hover{background:#2563eb;color:#fff}.topbar{background:#fff;color:#0f172a;border-bottom:1px solid #e8eef7;box-shadow:0 4px 18px rgba(15,23,42,.04)}.navlinks a{color:#334155}.navlinks a:hover{color:#1d4ed8;background:#eff6ff}.brand{color:#0f172a}.brand small{color:#64748b}@media(max-width:940px){.side{border-radius:14px}.dashboard-hero:after{display:none}.metric-card{min-height:96px}}
 </style></head><body>
 <header class="topbar no-print"><div class="wrap nav"><a class="brand" href="{{ url_for('index') }}">{% if school and school.crest %}<img class="crest" src="{{ url_for('uploads', filename=school.crest) }}" alt="crest">{% else %}<span class="crest-fallback">SMS</span>{% endif %}<span><span style="display:block">Smart Schools SMS</span><small>{{ school.name if school else 'School Management System' }}</small></span></a><nav class="navlinks">{% if user %}<a href="{{ url_for('dashboard') }}">Dashboard</a><a href="{{ url_for('logout') }}">Logout</a>{% else %}<a href="{{ url_for('index') }}">Home</a><a href="{{ url_for('register_school') }}">Register School</a><a class="btn" href="{{ url_for('login') }}">Login</a>{% endif %}</nav></div></header>
 {% block body %}{% endblock %}<script>
@@ -649,10 +700,10 @@ SIDEBAR = """
 <aside class="side no-print"><strong>{{ role_label(user.role) }}</strong><p class="muted" style="color:#bcd0ec">{{ user.full_name }}</p>
 <a href="{{ url_for('dashboard') }}">Dashboard</a>
 {% if user.role == 'system_admin' %}<a href="{{ url_for('schools') }}">Schools</a>{% endif %}
-{% if user.role == 'school_admin' %}<a href="{{ url_for('teachers') }}">Teachers</a><a href="{{ url_for('classes_subjects') }}">Classes & Subjects</a>{% endif %}
-{% if user.role == 'teacher' %}<a href="{{ url_for('students') }}">My Students</a><a href="{{ url_for('attendance') }}">Attendance</a>{% endif %}
+{% if user.role == 'school_admin' %}<a href="{{ url_for('users') }}">User Management</a><a href="{{ url_for('teachers') }}">Teachers</a><a href="{{ url_for('teacher_assignments') }}">Teaching Assignments</a><a href="{{ url_for('classes_subjects') }}">Classes & Subjects</a>{% endif %}
+{% if user.role in ['teacher','registrar'] %}<a href="{{ url_for('students') }}">{{ 'My Students' if user.role == 'teacher' else 'Students & Admissions' }}</a>{% endif %}{% if user.role == 'teacher' %}<a href="{{ url_for('attendance') }}">Attendance</a>{% endif %}
 {% if user.role in ['school_admin','teacher'] %}<a href="{{ url_for('scores') }}">Scores</a>{% endif %}
-{% if user.role == 'school_admin' %}<a href="{{ url_for('fees') }}">Fees</a><a href="{{ url_for('onboarding') }}">School Profile</a>{% endif %}
+{% if user.role in ['school_admin','accountant'] %}<a href="{{ url_for('fees') }}">Fees & Payments</a>{% endif %}{% if user.role == 'school_admin' %}<a href="{{ url_for('onboarding') }}">School Profile</a>{% endif %}
 {% if user.role in ['system_admin','school_admin'] %}<a href="{{ url_for('communications') }}">SMS & Email</a>{% endif %}
 {% if user.role == 'system_admin' %}<a href="{{ url_for('audit_logs') }}">Audit Log</a>{% endif %}
 {% if user.role in ['school_admin','teacher','student'] %}<a href="{{ url_for('announcements') }}">Notices</a><a href="{{ url_for('calendar') }}">Calendar</a><a href="{{ url_for('timetable') }}">Timetable</a><a href="{{ url_for('library') }}">Library</a>{% endif %}
@@ -748,7 +799,7 @@ def register_routes(app: Flask) -> None:
             flash("Invalid username, password, or portal.", "error")
         portal_label = {"admin": "Admin Login", "teacher": "Teacher Login", "student": "Student Login"}.get(portal, "Login")
         visual = portal if portal in {"admin", "teacher", "student"} else "admin"
-        return render("""<main class="login-shell"><section class="card login-card"><div class="login-visual {{ visual }}"></div><h2>{{ portal_label }}</h2><p class="muted">Choose the correct portal for your account.</p><div class="actions"><a class="btn ghost" href="{{ url_for('login', portal='admin') }}">Admin</a><a class="btn ghost" href="{{ url_for('login', portal='teacher') }}">Teacher</a><a class="btn ghost" href="{{ url_for('login', portal='student') }}">Student</a></div>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}">{{ field('Username','username', required=true) }}{{ field('Password','password','password', required=true) }}<button class="btn">Login</button></form><p><a class="btn ghost" href="{{ url_for('reset_password', portal=portal) }}">Reset Password</a></p><p class="muted">Default system admin: <b>admin</b> / <b>admin123</b>. Change it before real use.</p></section></main>""", title=portal_label, portal=portal, portal_label=portal_label, visual=visual)
+        return render("""<main class="login-shell"><section class="card login-card"><div class="login-visual {{ visual }}"></div><h2>{{ portal_label }}</h2><p class="muted">Choose the correct portal for your account.</p><div class="actions"><a class="btn ghost" href="{{ url_for('login', portal='admin') }}">Admin</a><a class="btn ghost" href="{{ url_for('login', portal='teacher') }}">Teacher</a><a class="btn ghost" href="{{ url_for('login', portal='student') }}">Student</a></div>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}">{{ field('Username','username', required=true) }}{{ field('Password','password','password', required=true) }}<button class="btn">Login</button></form><p><a class="btn ghost" href="{{ url_for('reset_password', portal=portal) }}">Reset Password</a></p><p class="muted">Use the credentials issued by your school administrator.</p></section></main>""", title=portal_label, portal=portal, portal_label=portal_label, visual=visual)
 
     @app.route("/reset-password", methods=["GET", "POST"])
     def reset_password():
@@ -828,11 +879,25 @@ def register_routes(app: Flask) -> None:
         if user.role == "student":
             return redirect(url_for("student_results"))
         sid = user.school_id
-        stats = {"Schools": School.query.count(), "Users": User.query.count(), "Students": Student.query.count(), "Teachers": User.query.filter_by(role="teacher").count()} if user.role == "system_admin" else ({"My Subjects": Subject.query.filter_by(school_id=sid, teacher_id=user.id).count(), "Scores Entered": Score.query.filter_by(school_id=sid, teacher_id=user.id).count(), "Classes": ClassRoom.query.filter_by(school_id=sid, teacher_id=user.id).count(), "Notices": Announcement.query.filter(Announcement.school_id == sid, Announcement.audience.in_(["all", "teacher"])).count()} if user.role == "teacher" else {"Students": Student.query.filter_by(school_id=sid).count(), "Teachers": User.query.filter_by(school_id=sid, role="teacher").count(), "Classes": ClassRoom.query.filter_by(school_id=sid).count(), "Subjects": Subject.query.filter_by(school_id=sid).count()})
+        if user.role == "system_admin":
+            stats = {"Schools": School.query.count(), "Users": User.query.count(), "Students": Student.query.count(), "Teachers": User.query.filter_by(role="teacher").count()}
+        elif user.role == "teacher":
+            stats = {"My Subjects": len(teacher_subject_ids(user)), "Scores Entered": Score.query.filter_by(school_id=sid, teacher_id=user.id).count(), "Classes": len(teacher_class_ids(user)), "Notices": Announcement.query.filter(Announcement.school_id == sid, Announcement.audience.in_(["all", "teacher"])).count()}
+        elif user.role == "accountant":
+            fee_rows = Fee.query.filter_by(school_id=sid, term=school.term, academic_year=school.academic_year).all()
+            due = sum(row.amount_due for row in fee_rows)
+            paid = sum(row.amount_paid for row in fee_rows)
+            stats = {"Fees Collected": f"GH₵ {paid:,.2f}", "Outstanding": f"GH₵ {max(due - paid, 0):,.2f}", "Fee Records": len(fee_rows), "Students": Student.query.filter_by(school_id=sid).count()}
+        elif user.role == "registrar":
+            stats = {"Students": Student.query.filter_by(school_id=sid).count(), "Classes": ClassRoom.query.filter_by(school_id=sid).count(), "New Admissions": Student.query.filter_by(school_id=sid).count(), "Guardians": Student.query.filter(Student.school_id == sid, Student.guardian_phone != "").count()}
+        else:
+            stats = {"Students": Student.query.filter_by(school_id=sid).count(), "Teachers": User.query.filter_by(school_id=sid, role="teacher").count(), "Classes": ClassRoom.query.filter_by(school_id=sid).count(), "Subjects": Subject.query.filter_by(school_id=sid).count()}
         schools = School.query.order_by(School.created_at.desc()).limit(8).all() if user.role == "system_admin" else []
         recent_scores_query = db.session.query(Score, Student, User, Subject).join(Student, Score.student_id == Student.id).join(User, Student.user_id == User.id).join(Subject, Score.subject_id == Subject.id).filter(Score.school_id == sid)
         if user.role == "teacher":
-            recent_scores_query = recent_scores_query.filter(Subject.teacher_id == user.id)
+            subject_ids = teacher_subject_ids(user)
+            class_ids = teacher_class_ids(user)
+            recent_scores_query = recent_scores_query.filter(Score.student.has(Student.class_id.in_(class_ids)), Score.subject_id.in_(subject_ids)) if class_ids and subject_ids else recent_scores_query.filter(False)
         recent_scores = recent_scores_query.order_by(Score.updated_at.desc()).limit(8).all() if user.role in {"school_admin", "teacher"} else []
         analytics = {}
         grade_bands = []
@@ -871,7 +936,7 @@ def register_routes(app: Flask) -> None:
             flash("Enter a valid SMS API URL beginning with http:// or https://.", "error")
             return redirect(url_for("dashboard"))
         school = current_school()
-        school.sms_api_url = sms_api_url
+        school.sms_api_url = sms_api_url or "https://sms.nalosolutions.com/smsbackend/Resl_Nalo/send-message/"
         log_action("sms_api_url_updated", "SMS API URL updated")
         db.session.commit()
         flash("SMS API URL saved successfully.", "success")
@@ -913,7 +978,7 @@ def register_routes(app: Flask) -> None:
         return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="card"><h2>School Profile Setup</h2><form method="post" enctype="multipart/form-data" class="grid cols-2">{{ csrf() }}{{ field('School Name','name', value=school.name) }}{{ field('Motto','motto', value=school.motto) }}{{ field('Phone','phone', value=school.phone) }}{{ field('Email','email','email', school.email) }}{{ field('Academic Year','academic_year', value=school.academic_year, placeholder='2026/2027') }}{{ field('Term','term', value=school.term, placeholder='Term 1') }}{{ field('Head Name','head_name', value=school.head_name) }}{{ field('Head Title','head_title', value=school.head_title or 'Head of School') }}<label>School Crest<input name="crest" type="file" accept="image/*"></label><label>Head Signature<input name="head_signature" type="file" accept="image/*"></label><label style="grid-column:1/-1">Address<textarea name="address">{{ school.address }}</textarea></label><button class="btn green">Save School Profile</button></form></section></div></main>""", title="School Profile")
 
     @app.route("/students", methods=["GET", "POST"])
-    @login_required("school_admin", "teacher")
+    @login_required("school_admin", "registrar", "teacher")
     @school_required
     def students():
         user = current_user()
@@ -967,6 +1032,29 @@ def register_routes(app: Flask) -> None:
         students = students_query.order_by(User.full_name).all()
         return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>{{ 'My Students' if user.role == 'teacher' else 'Students' }}</h2>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% if user.role == 'teacher' %}<form method="post" class="grid cols-3">{{ csrf() }}{{ field('Full Name','full_name') }}{{ field('Admission No','admission_no') }}{{ field('Username','username') }}{{ field('Temporary Password','password','password', placeholder='Leave blank to auto-generate') }}{{ field('Guardian Name','guardian_name') }}{{ field('Guardian Phone','guardian_phone') }}<button class="btn green">Add Student To My Class</button></form>{% endif %}</article><article class="card"><table><tr><th>Name</th><th>Username</th><th>Admission No</th><th>Class</th><th>Guardian</th><th>Action</th></tr>{% for st, u, c in students %}<tr><td>{{ u.full_name }}</td><td>{{ u.username }}</td><td>{{ st.admission_no }}</td><td>{{ c.name if c else '-' }}</td><td>{{ st.guardian_name }} {{ st.guardian_phone }}</td><td>{% if user.role == 'school_admin' %}<div class="actions"><form method="post">{{ csrf() }}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn ghost">Reset Password</button></form><form method="post" onsubmit="return confirm('Delete this student?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn red">Delete</button></form></div>{% endif %}</td></tr>{% endfor %}</table></article></section></div></main>""", title="Students", students=students)
 
+    @app.route("/users", methods=["GET", "POST"])
+    @login_required("school_admin")
+    @school_required
+    def users():
+        user = current_user()
+        sid = user.school_id
+        if request.method == "POST":
+            role = request.form.get("role", "")
+            if role not in {"school_admin", "accountant", "registrar"}:
+                abort(400)
+            password = request.form.get("password") or generate_temporary_password()
+            account = User(school_id=sid, role=role, full_name=request.form["full_name"].strip(), username=request.form["username"].strip().lower(), password_hash=generate_password_hash(password), email=request.form.get("email", ""), phone=request.form.get("phone", ""), must_change_password=True)
+            try:
+                db.session.add(account)
+                db.session.commit()
+                create_login_slip(account, password)
+                return redirect(url_for("login_slip"))
+            except Exception:
+                db.session.rollback()
+                flash("That username is already in use for this school.", "error")
+        accounts = User.query.filter(User.school_id == sid, User.role.in_(["school_admin", "accountant", "registrar"])).order_by(User.role, User.full_name).all()
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>User Management</h2><p class="muted">Create secure administrator, accountant, and registrar accounts.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}{{ field('Full Name','full_name', required=true) }}{{ field('Username','username', required=true) }}{{ field('Temporary Password','password','password', placeholder='Leave blank to auto-generate') }}{{ field('Email','email','email') }}{{ field('Phone','phone') }}<label>Role<select name="role"><option value="registrar">Registrar</option><option value="accountant">Accountant</option><option value="school_admin">School Administrator</option></select></label><button class="btn green">Create Account & Print Login Slip</button></form></article><article class="card"><table><tr><th>Name</th><th>Role</th><th>Username</th><th>Contact</th><th>Status</th></tr>{% for account in accounts %}<tr><td>{{ account.full_name }}</td><td>{{ role_label(account.role) }}</td><td>{{ account.username }}</td><td>{{ account.email or account.phone or '-' }}</td><td>{{ 'Active' if account.active else 'Inactive' }}</td></tr>{% else %}<tr><td colspan="5">No staff accounts have been created.</td></tr>{% endfor %}</table></article></section></div></main>""", title="User Management", accounts=accounts)
+
     @app.route("/teachers", methods=["GET", "POST"])
     @login_required("school_admin")
     @school_required
@@ -1010,8 +1098,38 @@ def register_routes(app: Flask) -> None:
                     flash("That teacher username already exists.", "error")
         teachers = User.query.filter_by(school_id=sid, role="teacher").order_by(User.full_name).all()
         classes = ClassRoom.query.filter_by(school_id=sid).order_by(ClassRoom.name).all()
-        assigned = {t.id: ", ".join(c.name for c in classes if c.teacher_id == t.id) or "-" for t in teachers}
+        assignment_rows = db.session.query(TeacherAssignment.teacher_id, ClassRoom.name, Subject.name).join(ClassRoom, TeacherAssignment.class_id == ClassRoom.id).outerjoin(Subject, TeacherAssignment.subject_id == Subject.id).filter(TeacherAssignment.school_id == sid).all()
+        assigned = {teacher.id: [] for teacher in teachers}
+        for teacher_id, class_name, subject_name in assignment_rows:
+            assigned.setdefault(teacher_id, []).append(f"{class_name} · {subject_name or 'Class teacher'}")
+        assigned = {teacher_id: ", ".join(values) or "-" for teacher_id, values in assigned.items()}
         return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>Teachers</h2>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% if user.role == 'school_admin' %}<form method="post" class="grid cols-3">{{ csrf() }}{{ field('Full Name','full_name') }}{{ field('Username','username') }}{{ field('Temporary Password','password','password', placeholder='Leave blank to auto-generate') }}{{ field('Email','email','email') }}{{ field('Phone','phone') }}<label>Assign Class<select name="class_id"><option value="">No class yet</option>{% for c in classes %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></label><button class="btn green">Add Teacher & Print Login Slip</button></form>{% endif %}</article><article class="card"><table><tr><th>Name</th><th>Username</th><th>Assigned Class</th><th>Email</th><th>Phone</th><th>Action</th></tr>{% for t in teachers %}<tr><td>{{ t.full_name }}</td><td>{{ t.username }}</td><td>{{ assigned[t.id] }}</td><td>{{ t.email }}</td><td>{{ t.phone }}</td><td>{% if user.role == 'school_admin' %}<div class="actions"><form method="post">{{ csrf() }}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="teacher_id" value="{{ t.id }}"><button class="btn ghost">Reset Password</button></form><form method="post" onsubmit="return confirm('Delete this teacher?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="teacher_id" value="{{ t.id }}"><button class="btn red">Delete</button></form></div>{% endif %}</td></tr>{% endfor %}</table></article></section></div></main>""", title="Teachers", teachers=teachers, classes=classes, assigned=assigned)
+
+    @app.route("/teacher-assignments", methods=["GET", "POST"])
+    @login_required("school_admin")
+    @school_required
+    def teacher_assignments():
+        user = current_user()
+        sid = user.school_id
+        if request.method == "POST":
+            if request.form.get("action") == "remove":
+                TeacherAssignment.query.filter_by(id=int(request.form["assignment_id"]), school_id=sid).delete()
+                db.session.commit()
+                flash("Teaching assignment removed.", "success")
+                return redirect(url_for("teacher_assignments"))
+            assignment = TeacherAssignment(school_id=sid, teacher_id=int(request.form["teacher_id"]), class_id=int(request.form["class_id"]), subject_id=int(request.form["subject_id"]))
+            try:
+                db.session.add(assignment)
+                db.session.commit()
+                flash("Teaching assignment saved.", "success")
+            except Exception:
+                db.session.rollback()
+                flash("That teacher, class, and subject combination already exists.", "error")
+        teachers = User.query.filter_by(school_id=sid, role="teacher", active=True).order_by(User.full_name).all()
+        classes = ClassRoom.query.filter_by(school_id=sid).order_by(ClassRoom.name).all()
+        subjects = Subject.query.filter_by(school_id=sid).order_by(Subject.name).all()
+        assignments = db.session.query(TeacherAssignment, User, ClassRoom, Subject).join(User, TeacherAssignment.teacher_id == User.id).join(ClassRoom, TeacherAssignment.class_id == ClassRoom.id).join(Subject, TeacherAssignment.subject_id == Subject.id).filter(TeacherAssignment.school_id == sid).order_by(User.full_name, ClassRoom.name, Subject.name).all()
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>Teaching Assignments</h2><p class="muted">Assign a teacher to any number of class and subject combinations.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}<label>Teacher<select name="teacher_id" required>{% for teacher in teachers %}<option value="{{ teacher.id }}">{{ teacher.full_name }}</option>{% endfor %}</select></label><label>Class<select name="class_id" required>{% for class_group in classes %}<option value="{{ class_group.id }}">{{ class_group.name }}</option>{% endfor %}</select></label><label>Subject<select name="subject_id" required>{% for subject in subjects %}<option value="{{ subject.id }}">{{ subject.name }}</option>{% endfor %}</select></label><button class="btn green">Save Assignment</button></form></article><article class="card"><table><tr><th>Teacher</th><th>Class</th><th>Subject</th><th>Action</th></tr>{% for assignment, teacher, class_group, subject in assignments %}<tr><td>{{ teacher.full_name }}</td><td>{{ class_group.name }}</td><td>{{ subject.name }}</td><td><form method="post">{{ csrf() }}<input type="hidden" name="action" value="remove"><input type="hidden" name="assignment_id" value="{{ assignment.id }}"><button class="btn red">Remove</button></form></td></tr>{% else %}<tr><td colspan="4">No teaching assignments have been created.</td></tr>{% endfor %}</table></article></section></div></main>""", title="Teaching Assignments", teachers=teachers, classes=classes, subjects=subjects, assignments=assignments)
 
     @app.route("/classes-subjects", methods=["GET", "POST"])
     @login_required("school_admin")
@@ -1057,7 +1175,11 @@ def register_routes(app: Flask) -> None:
                 student = Student.query.filter_by(id=int(request.form["student_id"]), school_id=sid).first()
                 subject_query = Subject.query.filter_by(id=int(request.form["subject_id"]), school_id=sid)
                 if user.role == "teacher":
-                    subject_query = subject_query.filter_by(teacher_id=user.id)
+                    class_ids = teacher_class_ids(user)
+                    subject_ids = teacher_subject_ids(user)
+                    if not class_ids or not subject_ids or not student or student.class_id not in class_ids or int(request.form["subject_id"]) not in subject_ids:
+                        raise ValueError("You can only enter scores for your assigned class and subject.")
+                    subject_query = subject_query.filter(Subject.id.in_(subject_ids))
                 subject = subject_query.first()
                 if not student or not subject:
                     raise ValueError("Please choose a valid student and subject.")
@@ -1082,11 +1204,14 @@ def register_routes(app: Flask) -> None:
         students = students_query.order_by(User.full_name).all()
         subjects_query = Subject.query.filter_by(school_id=sid)
         if user.role == "teacher":
-            subjects_query = subjects_query.filter_by(teacher_id=user.id)
+            subject_ids = teacher_subject_ids(user)
+            subjects_query = subjects_query.filter(Subject.id.in_(subject_ids)) if subject_ids else subjects_query.filter(False)
         subjects = subjects_query.order_by(Subject.name).all()
         scores_query = db.session.query(Score, Student, User, Subject).join(Student, Score.student_id == Student.id).join(User, Student.user_id == User.id).join(Subject, Score.subject_id == Subject.id).filter(Score.school_id == sid)
         if user.role == "teacher":
-            scores_query = scores_query.filter(Subject.teacher_id == user.id)
+            class_ids = teacher_class_ids(user)
+            subject_ids = teacher_subject_ids(user)
+            scores_query = scores_query.filter(Student.class_id.in_(class_ids), Score.subject_id.in_(subject_ids)) if class_ids and subject_ids else scores_query.filter(False)
         scores = scores_query.order_by(Score.updated_at.desc()).all()
         return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>Examination Scores</h2>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}<label>Student<select name="student_id" required>{% for st,u in students %}<option value="{{ st.id }}">{{ u.full_name }} - {{ st.admission_no }}</option>{% endfor %}</select></label><label>Subject<select name="subject_id" required>{% for s in subjects %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></label>{{ field('Class Score / 50','class_score','number') }}{{ field('Exam Score / 50','exam_score','number') }}{{ field('Term','term', value=school.term) }}{{ field('Academic Year','academic_year', value=school.academic_year) }}{{ field('Position','position', placeholder='1st, 2nd, 3rd') }}{{ field('Conduct','conduct', placeholder='Excellent, Good') }}{{ field('Remarks','remarks') }}<button class="btn green">Save Score</button></form></article><article class="card"><table><tr><th>Student</th><th>Subject</th><th>Total</th><th>Grade</th><th>Meaning</th><th>Remarks</th></tr>{% for sc,st,u,sub in scores %}{% set total=sc.class_score+sc.exam_score %}{% set info=grade_info(total) %}<tr><td>{{ u.full_name }} <span class="muted">{{ st.admission_no }}</span></td><td>{{ sub.name }}</td><td>{{ total }}</td><td>{{ info.grade }}</td><td>{{ info.interpretation }}</td><td>{{ sc.remarks }}</td></tr>{% endfor %}</table></article></section></div></main>""", title="Examination Scores", students=students, subjects=subjects, scores=scores)
 
@@ -1128,7 +1253,7 @@ def register_routes(app: Flask) -> None:
         return simple_period_page("Attendance", students, records, school, "attendance")
 
     @app.route("/fees", methods=["GET", "POST"])
-    @login_required("school_admin")
+    @login_required("school_admin", "accountant")
     @school_required
     def fees():
         user = current_user()
