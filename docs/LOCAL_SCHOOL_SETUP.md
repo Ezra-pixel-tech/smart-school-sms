@@ -1,4 +1,4 @@
-# Local School Setup
+s# Local School Setup
 
 Use this when a school wants the system to run inside the school without internet.
 
