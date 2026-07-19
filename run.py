@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from io import BytesIO
 from pathlib import Path
@@ -26,10 +26,14 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 db = SQLAlchemy()
 
 LOGIN_AUDIENCES = {
-    "admin": {"system_admin", "school_admin", "accountant", "registrar"},
+    "admin": {"system_admin", "school_admin", "accountant", "registrar", "librarian", "receptionist"},
     "teacher": {"teacher"},
     "student": {"student"},
+    "parent": {"parent"},
 }
+
+ALLOWED_ROLES = frozenset({"system_admin", "school_admin", "teacher", "student", "parent", "accountant", "registrar", "librarian", "receptionist"})
+_LOGIN_ATTEMPTS: dict[str, list[datetime]] = {}
 
 
 def normalize_database_url(url: str) -> str:
@@ -49,10 +53,11 @@ def create_app() -> Flask:
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = Config.SQLALCHEMY_ENGINE_OPTIONS
     app.config["UPLOAD_FOLDER"] = str(UPLOAD_DIR)
-    app.config["SESSION_COOKIE_HTTPONLY"] = True
-    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "0") == "1"
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+    if not app.config.get("SECRET_KEY"):
+        raise RuntimeError("SECRET_KEY must be configured when FLASK_DEBUG=0")
+    app.permanent_session_lifetime = timedelta(minutes=Config.PERMANENT_SESSION_LIFETIME_MINUTES)
+    proxy_count = max(0, Config.TRUSTED_PROXY_COUNT)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_count, x_proto=proxy_count, x_host=proxy_count)
     db.init_app(app)
     register_routes(app)
     return app
@@ -121,8 +126,11 @@ class TeacherAssignment(db.Model):
     teacher_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     class_id = db.Column(db.Integer, db.ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_id = db.Column(db.Integer, db.ForeignKey("subjects.id", ondelete="CASCADE"), nullable=True, index=True)
+    section = db.Column(db.String(80), default="", nullable=False, index=True)
+    academic_year = db.Column(db.String(40), default="", nullable=False, index=True)
+    term = db.Column(db.String(40), default="", nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    __table_args__ = (UniqueConstraint("teacher_id", "class_id", "subject_id", name="uq_teacher_class_subject"),)
+    __table_args__ = (UniqueConstraint("teacher_id", "class_id", "subject_id", "section", "academic_year", "term", name="uq_teacher_assignment_period"),)
 
 
 class Student(db.Model):
@@ -136,6 +144,17 @@ class Student(db.Model):
     guardian_phone = db.Column(db.String(80), default="")
     guardian_email = db.Column(db.String(160), default="")
     __table_args__ = (UniqueConstraint("school_id", "admission_no", name="uq_student_school_admission"),)
+
+
+class ParentStudent(db.Model):
+    __tablename__ = "parent_students"
+    id = db.Column(db.Integer, primary_key=True)
+    school_id = db.Column(db.Integer, db.ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    relationship = db.Column(db.String(40), default="Guardian", nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("parent_id", "student_id", name="uq_parent_student"),)
 
 
 class Score(db.Model):
@@ -257,6 +276,7 @@ class AuditLog(db.Model):
 Index("ix_scores_student_period", Score.student_id, Score.term, Score.academic_year)
 Index("ix_users_role_school", User.school_id, User.role)
 Index("ix_students_school_class", Student.school_id, Student.class_id)
+Index("ix_parent_students_scope", ParentStudent.school_id, ParentStudent.parent_id, ParentStudent.student_id)
 Index("ix_attendance_student_period", Attendance.student_id, Attendance.term, Attendance.academic_year)
 Index("ix_fees_student_period", Fee.student_id, Fee.term, Fee.academic_year)
 Index("ix_audit_school_created", AuditLog.school_id, AuditLog.created_at)
@@ -273,12 +293,13 @@ def set_database_pragmas(dbapi_connection, _):
 def init_db() -> None:
     db.create_all()
     ensure_compatibility_migrations()
-    if not User.query.filter_by(role="system_admin", username="admin").first():
+    bootstrap_password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if bootstrap_password and not User.query.filter_by(role="system_admin", username="admin").first():
         admin = User(
             role="system_admin",
             full_name="System Administrator",
             username="admin",
-            password_hash=generate_password_hash("admin123"),
+            password_hash=generate_password_hash(bootstrap_password),
             must_change_password=True,
         )
         db.session.add(admin)
@@ -306,6 +327,9 @@ def ensure_compatibility_migrations() -> None:
             "ALTER TABLE communications ADD COLUMN IF NOT EXISTS recipient VARCHAR(180) DEFAULT ''",
             "ALTER TABLE communications ADD COLUMN IF NOT EXISTS status VARCHAR(40) DEFAULT 'recorded'",
             "ALTER TABLE communications ADD COLUMN IF NOT EXISTS created_by INTEGER",
+            "ALTER TABLE teacher_assignments ADD COLUMN IF NOT EXISTS section VARCHAR(80) DEFAULT '' NOT NULL",
+            "ALTER TABLE teacher_assignments ADD COLUMN IF NOT EXISTS academic_year VARCHAR(40) DEFAULT '' NOT NULL",
+            "ALTER TABLE teacher_assignments ADD COLUMN IF NOT EXISTS term VARCHAR(40) DEFAULT '' NOT NULL",
         ]:
             db.session.execute(text(statement))
         db.session.execute(text("""
@@ -314,6 +338,9 @@ def ensure_compatibility_migrations() -> None:
                 teacher_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
                 subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+                section VARCHAR(80) NOT NULL DEFAULT '',
+                academic_year VARCHAR(40) NOT NULL DEFAULT '',
+                term VARCHAR(40) NOT NULL DEFAULT '',
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 CONSTRAINT uq_teacher_class_subject UNIQUE (teacher_id, class_id, subject_id)
             )
@@ -400,6 +427,14 @@ def ensure_compatibility_migrations() -> None:
                 UNIQUE(teacher_id, class_id, subject_id)
             )
         """))
+    assignment_columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(teacher_assignments)")).fetchall()}
+    for name, ddl in [
+        ("section", "ALTER TABLE teacher_assignments ADD COLUMN section VARCHAR(80) DEFAULT '' NOT NULL"),
+        ("academic_year", "ALTER TABLE teacher_assignments ADD COLUMN academic_year VARCHAR(40) DEFAULT '' NOT NULL"),
+        ("term", "ALTER TABLE teacher_assignments ADD COLUMN term VARCHAR(40) DEFAULT '' NOT NULL"),
+    ]:
+        if name not in assignment_columns:
+            db.session.execute(text(ddl))
     db.session.execute(text("""
         INSERT OR IGNORE INTO teacher_assignments (school_id, teacher_id, class_id, subject_id, created_at)
         SELECT school_id, teacher_id, id, NULL, CURRENT_TIMESTAMP FROM classes WHERE teacher_id IS NOT NULL
@@ -525,6 +560,7 @@ def delete_school_records(school_id: int) -> None:
     for model in [Score, Attendance, Fee]:
         if student_ids:
             model.query.filter(model.student_id.in_(student_ids)).delete(synchronize_session=False)
+    ParentStudent.query.filter_by(school_id=school_id).delete(synchronize_session=False)
     for model in [Timetable, Announcement, SchoolEvent, LibraryResource, Communication, AuditLog, Subject, ClassRoom, Student]:
         if hasattr(model, "school_id"):
             model.query.filter_by(school_id=school_id).delete(synchronize_session=False)
@@ -536,7 +572,7 @@ def delete_school_records(school_id: int) -> None:
 
 
 def role_label(role: str) -> str:
-    return {"system_admin": "System Admin", "school_admin": "School Admin", "accountant": "Accountant", "registrar": "Registrar", "teacher": "Teacher", "student": "Student"}.get(role, role.title())
+    return {"system_admin": "System Admin", "school_admin": "School Admin", "accountant": "Accountant", "registrar": "Registrar", "receptionist": "Receptionist", "librarian": "Librarian", "parent": "Parent", "teacher": "Teacher", "student": "Student"}.get(role, role.replace("_", " ").title())
 
 
 def login_required(*roles):
@@ -636,6 +672,43 @@ def teacher_subject_ids(user: User) -> list[int]:
     return list({row[0] for row in assigned.union(legacy).all()})
 
 
+def teacher_can_access(user: User, class_id: int | None, subject_id: int | None = None, academic_year: str = "", term: str = "") -> bool:
+    """Authorize the exact assignment tuple; legacy fields remain a compatibility fallback."""
+    if not user or user.role != "teacher" or not class_id:
+        return False
+    query = TeacherAssignment.query.filter_by(school_id=user.school_id, teacher_id=user.id, class_id=class_id)
+    if subject_id is not None:
+        query = query.filter_by(subject_id=subject_id)
+    if academic_year:
+        query = query.filter(TeacherAssignment.academic_year.in_(["", academic_year]))
+    if term:
+        query = query.filter(TeacherAssignment.term.in_(["", term]))
+    if query.first():
+        return True
+    legacy_class = ClassRoom.query.filter_by(id=class_id, school_id=user.school_id, teacher_id=user.id).first()
+    if subject_id is None:
+        return bool(legacy_class)
+    legacy_subject = Subject.query.filter_by(id=subject_id, school_id=user.school_id, teacher_id=user.id).first()
+    return bool(legacy_class and legacy_subject)
+
+
+def client_ip() -> str:
+    return (request.remote_addr or "unknown")[:80]
+
+
+def login_is_limited(identity: str) -> bool:
+    key = f"{client_ip()}:{identity.lower()}"
+    cutoff = datetime.utcnow() - timedelta(seconds=Config.LOGIN_RATE_LIMIT_WINDOW_SECONDS)
+    attempts = [stamp for stamp in _LOGIN_ATTEMPTS.get(key, []) if stamp >= cutoff]
+    _LOGIN_ATTEMPTS[key] = attempts
+    return len(attempts) >= Config.LOGIN_RATE_LIMIT_ATTEMPTS
+
+
+def record_failed_login(identity: str) -> None:
+    key = f"{client_ip()}:{identity.lower()}"
+    _LOGIN_ATTEMPTS.setdefault(key, []).append(datetime.utcnow())
+
+
 BASE_HTML = """
 {% macro csrf() -%}<input type="hidden" name="_csrf" value="{{ csrf_token() }}">{%- endmacro %}
 {% macro field(label, name, type='text', value='', placeholder='', required=false) -%}
@@ -657,6 +730,12 @@ form{display:grid;gap:14px}label{font-weight:750;color:#344054;font-size:13px}in
 @media print{.report-card.terminal{border:0!important;padding:0!important}.terminal th,.terminal td{padding:4px 5px!important;font-size:10px!important}.terminal .report-top img{width:70px;height:70px}.terminal h2{font-size:16px}.terminal-title{padding:6px 24px}.terminal .card{border:0!important}}
 .dashboard-hero{background:linear-gradient(115deg,rgba(11,31,58,.98),rgba(15,118,110,.88)),url('https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1600&q=80') center/cover;border-radius:14px;box-shadow:0 18px 42px rgba(11,31,58,.2)}.dashboard-kicker{display:inline-block;margin-bottom:10px;color:#d9fbf5;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.dashboard-kicker.dark{color:#0f766e}.metric-card{border-left-color:#d4a72c;border-radius:12px}.metric-card b{color:#0b1f3a}.card{border-radius:12px}.feature-strip div{background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.22);backdrop-filter:blur(4px)}.feature-strip .muted{color:#d9fbf5}.sms-config{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(320px,1.2fr);gap:24px;align-items:center;border:1px solid #cfe7e3;background:linear-gradient(135deg,#f7fcfb,#eef7f5)}.sms-config h3{color:#0b1f3a;margin:0 0 8px}.sms-config-form{gap:10px}.sms-config-form input{border-color:#a8d5ce;background:#fff}.sms-config-actions{display:flex;gap:12px;align-items:center;justify-content:space-between}.connection-status{border-radius:999px;padding:7px 10px;font-size:12px;font-weight:800}.connection-status.connected{background:#dff7eb;color:#166534}.connection-status.not-connected{background:#fff4d6;color:#8a5b00}.terminal{border-top:8px solid #0f766e!important}.terminal .report-top{border-bottom:2px solid #d4a72c;padding-bottom:10px}.terminal .terminal-title{background:linear-gradient(90deg,#0b1f3a,#0f766e)!important}.terminal th{background:#0b1f3a!important;color:#fff!important}.terminal .remarks tr:nth-child(even) td{background:#f0fdfa!important}.terminal .grading-key th{background:#0f766e!important;color:#fff!important}.terminal .grading-key td{background:#fffbeb!important}.cedi{font-weight:800;color:#0f766e}@media(max-width:940px){.sms-config{grid-template-columns:1fr}.sms-config-actions{align-items:stretch;flex-direction:column}.sms-config-actions .btn{width:100%}}
 .layout{align-items:start}.side{border-radius:18px;background:linear-gradient(180deg,#071b3b,#08274d 55%,#063257);box-shadow:0 18px 44px rgba(3,17,43,.28)}.side strong{font-size:15px;letter-spacing:.01em}.side a{position:relative;margin:4px 0;padding:11px 12px;font-size:13px;font-weight:700;transition:all .2s ease}.side a:before{content:'›';display:inline-block;margin-right:9px;color:#7dd3fc;font-size:18px;line-height:10px}.side a:hover{transform:translateX(3px);background:linear-gradient(90deg,#2563eb,#3b82f6);box-shadow:0 8px 18px rgba(37,99,235,.34)}.dashboard-hero{min-height:180px;padding:28px!important}.dashboard-hero h2{font-size:29px;letter-spacing:-.04em}.dashboard-hero:after{content:'';position:absolute;right:42px;top:30px;width:120px;height:120px;border:1px solid rgba(255,255,255,.22);border-radius:50%;box-shadow:24px 28px 0 -1px rgba(255,255,255,.08),50px 0 0 -1px rgba(255,255,255,.06)}.dashboard-hero{position:relative;overflow:hidden}.dashboard-hero>*{position:relative;z-index:1}.metric-card{position:relative;overflow:hidden;min-height:112px;border-left:0!important;padding:18px!important;color:#fff!important}.metric-card span,.metric-card b{color:#fff!important}.metric-card:after{content:'';position:absolute;right:-18px;bottom:-42px;width:100px;height:100px;border-radius:50%;background:rgba(255,255,255,.13)}.dashboard-hero + .grid .metric-card:nth-child(1){background:linear-gradient(135deg,#2563eb,#4f46e5)}.dashboard-hero + .grid .metric-card:nth-child(2){background:linear-gradient(135deg,#0f766e,#14b8a6)}.dashboard-hero + .grid .metric-card:nth-child(3){background:linear-gradient(135deg,#7c3aed,#a855f7)}.dashboard-hero + .grid .metric-card:nth-child(4){background:linear-gradient(135deg,#ea580c,#f59e0b)}.metric-card .progress{background:rgba(255,255,255,.25)}.metric-card .progress span{background:#fff}.card{box-shadow:0 10px 28px rgba(15,23,42,.06)}.card:hover{box-shadow:0 18px 38px rgba(15,23,42,.1)}.quick-actions .btn{border:1px solid #dbeafe;background:#f8fbff;color:#1d4ed8}.quick-actions .btn:hover{background:#2563eb;color:#fff}.topbar{background:#fff;color:#0f172a;border-bottom:1px solid #e8eef7;box-shadow:0 4px 18px rgba(15,23,42,.04)}.navlinks a{color:#334155}.navlinks a:hover{color:#1d4ed8;background:#eff6ff}.brand{color:#0f172a}.brand small{color:#64748b}@media(max-width:940px){.side{border-radius:14px}.dashboard-hero:after{display:none}.metric-card{min-height:96px}}
+/* Premium application system */
+:root{--brand:#2563eb;--brand-strong:#1d4ed8;--brand-soft:#eff6ff;--nav:#071b33;--accent:#0f766e;--warning:#f59e0b;--surface:#fff;--surface-subtle:#f8fafc;--text:#0f172a;--text-soft:#64748b;--border:#e2e8f0;--radius:14px;--radius-sm:10px;--focus:0 0 0 3px rgba(37,99,235,.2)}
+html{scroll-behavior:smooth}body{font-family:Inter,"Segoe UI",system-ui,-apple-system,sans-serif;background:#f6f8fc;color:var(--text);line-height:1.5}body:before{content:"";position:fixed;inset:0 0 auto;height:280px;background:radial-gradient(circle at 80% -20%,rgba(37,99,235,.12),transparent 55%);pointer-events:none;z-index:-1}h1,h2,h3{letter-spacing:-.025em}h2{font-size:clamp(1.35rem,2vw,1.75rem)}.wrap{max-width:1440px;padding-inline:clamp(16px,3vw,36px)}main.wrap{padding-top:28px}.topbar{position:sticky;background:rgba(255,255,255,.9);backdrop-filter:blur(18px);border-bottom:1px solid rgba(226,232,240,.8)}.nav{min-height:72px}.brand{gap:11px}.brand:before{content:"";width:42px;height:42px;background:url("{{ url_for('static', filename='brand-mark.svg') }}") center/contain no-repeat;flex:0 0 auto}.brand .crest,.brand .crest-fallback{display:none}.brand>span>span{font-size:15px}.brand small{font-size:11px;font-weight:600}.layout{grid-template-columns:260px minmax(0,1fr);gap:28px}.side{top:96px;border-radius:18px;padding:18px 14px;background:linear-gradient(180deg,#071b33,#0b2d50);max-height:calc(100vh - 112px);overflow:auto}.side strong,.side>p{display:block;padding-inline:10px}.side a{display:flex;align-items:center;min-height:42px;border-radius:10px}.side a:before{content:"";width:7px;height:7px;border:2px solid #7dd3fc;border-radius:3px;margin-right:11px}.side a:hover,.side a:focus-visible{transform:none;background:rgba(37,99,235,.9);outline:none}.card{border:1px solid rgba(226,232,240,.9);border-radius:var(--radius);box-shadow:0 1px 2px rgba(15,23,42,.03),0 10px 30px rgba(15,23,42,.05);padding:clamp(18px,2.3vw,26px)}.card:hover{transform:none}.dashboard-hero{min-height:210px;background:linear-gradient(110deg,#0b1f3a 10%,#0f4c67 62%,#0f766e);padding:32px!important}.metric-card{border-radius:14px}.btn{min-height:40px;border-radius:10px;padding:9px 14px;transition:transform .15s,box-shadow .15s,background .15s}.btn:hover{transform:translateY(-1px);box-shadow:0 7px 16px rgba(37,99,235,.18)}.btn:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:none;box-shadow:var(--focus)}input,select,textarea{min-height:44px;border-radius:10px;border-color:var(--border);transition:border-color .15s,box-shadow .15s}input:hover,select:hover,textarea:hover{border-color:#94a3b8}input:focus,select:focus,textarea:focus{border-color:var(--brand)}table{border:1px solid var(--border);border-radius:12px}th{height:44px;background:#f8fafc;color:#475569;font-size:11px;letter-spacing:.045em;text-transform:uppercase}td{height:50px}tbody tr:hover td{background:#f8fbff}.flash{border:1px solid currentColor;display:flex;align-items:center;gap:9px}.flash:before{content:"✓";display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:currentColor;color:#fff}.flash.error:before{content:"!"}.table-head{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:16px}.table-head h2,.table-head p{margin:0}.table-search{width:min(280px,100%);margin:0}.empty-state{display:grid;place-items:center;text-align:center;gap:5px;padding:38px;color:var(--text-soft)}.empty-state:before{content:"◇";font-size:34px;color:#94a3b8}.empty-state b{color:var(--text)}.badge{background:var(--brand-soft);color:var(--brand-strong)}.hero{min-height:620px;background:linear-gradient(90deg,rgba(7,27,51,.96),rgba(12,67,91,.78)),url('https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1800&q=80') center/cover}.hero h1{font-size:clamp(42px,6vw,68px);max-width:720px}.module-card{border-radius:20px;background:rgba(255,255,255,.97)}.module{border-radius:12px}.login-shell{min-height:calc(100vh - 72px)}.login-card{border-radius:20px}.login-visual{border-radius:14px}.slip{border-radius:16px}.report-card.terminal{border-radius:0}.navlinks .btn{color:#fff}
+@media(max-width:940px){.layout{grid-template-columns:1fr}.side{position:relative;top:0;display:flex;gap:6px;overflow-x:auto;max-height:none;padding:10px}.side strong,.side>p{display:none}.side a{white-space:nowrap;padding-inline:12px}.side a:before{display:none}.cols-4{grid-template-columns:repeat(2,minmax(0,1fr))}.table-head{align-items:stretch;flex-direction:column}.table-search{width:100%}}
+@media(max-width:620px){.topbar .brand small{display:none}.nav{flex-direction:row;align-items:center}.navlinks{justify-content:flex-end}.navlinks a:not(.btn){display:none}.cols-4{grid-template-columns:1fr}.dashboard-hero{min-height:180px;padding:22px!important}.hero{min-height:680px}.login-card{padding:20px}.card{border-radius:12px}table{font-size:13px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 </style></head><body>
 <header class="topbar no-print"><div class="wrap nav"><a class="brand" href="{{ url_for('index') }}">{% if school and school.crest %}<img class="crest" src="{{ url_for('uploads', filename=school.crest) }}" alt="crest">{% else %}<span class="crest-fallback">SMS</span>{% endif %}<span><span style="display:block">Smart Schools SMS</span><small>{{ school.name if school else 'School Management System' }}</small></span></a><nav class="navlinks">{% if user %}<a href="{{ url_for('dashboard') }}">Dashboard</a><a href="{{ url_for('logout') }}">Logout</a>{% else %}<a href="{{ url_for('index') }}">Home</a><a href="{{ url_for('register_school') }}">Register School</a><a class="btn" href="{{ url_for('login') }}">Login</a>{% endif %}</nav></div></header>
 {% block body %}{% endblock %}<script>
@@ -695,6 +774,20 @@ document.querySelectorAll('table').forEach(function(table) {
 document.querySelectorAll('.report-top p').forEach(function(line) {
   if (line.textContent.includes('@')) line.innerHTML = line.textContent.replace(/(\\S+@\\S+)/, '<br>$1');
 });
+document.querySelectorAll('[data-confirm]').forEach(function(form) {
+  form.addEventListener('submit', function(event) { if (!window.confirm(form.dataset.confirm)) event.preventDefault(); });
+});
+document.querySelectorAll('.table-search').forEach(function(input) {
+  input.addEventListener('input', function() {
+    const query = input.value.trim().toLowerCase();
+    const table = input.closest('.card').querySelector('table');
+    if (!table) return;
+    table.querySelectorAll('tbody tr, tr').forEach(function(row, index) {
+      if (index === 0 || row.querySelector('th')) return;
+      row.hidden = Boolean(query) && !row.textContent.toLowerCase().includes(query);
+    });
+  });
+});
 </script></body></html>
 """
 
@@ -710,6 +803,7 @@ SIDEBAR = """
 {% if user.role in ['system_admin','school_admin'] %}<a href="{{ url_for('communications') }}">SMS & Email</a>{% endif %}
 {% if user.role == 'system_admin' %}<a href="{{ url_for('audit_logs') }}">Audit Log</a>{% endif %}
 {% if user.role in ['school_admin','teacher','student'] %}<a href="{{ url_for('announcements') }}">Notices</a><a href="{{ url_for('calendar') }}">Calendar</a><a href="{{ url_for('timetable') }}">Timetable</a><a href="{{ url_for('library') }}">Library</a>{% endif %}
+{% if user.role == 'parent' %}<a href="{{ url_for('parent_portal') }}">My Children</a>{% endif %}
 {% if user.role == 'student' %}<a href="{{ url_for('student_results') }}">My Results</a>{% endif %}</aside>
 """
 
@@ -753,6 +847,12 @@ def register_routes(app: Flask) -> None:
 
     @app.route("/uploads/<filename>")
     def uploads(filename):
+        user = current_user()
+        if not user:
+            abort(404)
+        allowed = {school.crest for school in School.query if school.crest} | {school.head_signature for school in School.query if school.head_signature}
+        if filename not in allowed:
+            abort(404)
         return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
     @app.route("/favicon.ico")
@@ -790,18 +890,26 @@ def register_routes(app: Flask) -> None:
         if request.method == "POST":
             portal = request.form.get("portal", "admin").lower()
             allowed_roles = LOGIN_AUDIENCES.get(portal)
-            user = User.query.filter_by(username=request.form["username"].strip().lower(), active=True).first()
+            identity = request.form["username"].strip().lower()
+            if login_is_limited(identity):
+                db.session.add(AuditLog(username=identity, action="login_rate_limited", details=f"Rate limited {portal} login", ip_address=client_ip()))
+                db.session.commit()
+                flash("Too many login attempts. Please wait before trying again.", "error")
+                return render("""<main class="login-shell"><section class="card login-card"><h2>Login temporarily limited</h2><p class="muted">Please wait and try again later.</p><a class="btn ghost" href="{{ url_for('login', portal=portal) }}">Back</a></section></main>""", title="Login limited", portal=portal), 429
+            user = User.query.filter_by(username=identity, active=True).first()
             if user and (not allowed_roles or user.role in allowed_roles) and check_password_hash(user.password_hash, request.form["password"]):
                 session.clear()
                 csrf_token()
                 session["user_id"] = user.id
+                session.permanent = True
                 log_action("login", f"{role_label(user.role)} signed in")
                 db.session.commit()
                 flash(f"Welcome back, {user.full_name}.", "success")
                 if user.must_change_password:
                     return redirect(url_for("change_password"))
                 return redirect(url_for("dashboard"))
-            db.session.add(AuditLog(username=request.form.get("username", ""), action="failed_login", details=f"Failed {portal} portal login", ip_address=request.remote_addr or ""))
+            record_failed_login(identity)
+            db.session.add(AuditLog(username=identity, action="failed_login", details=f"Failed {portal} portal login", ip_address=client_ip()))
             db.session.commit()
             flash("Invalid username, password, or portal.", "error")
         portal_label = {"admin": "Admin Login", "teacher": "Teacher Login", "student": "Student Login"}.get(portal, "Login")
@@ -812,30 +920,12 @@ def register_routes(app: Flask) -> None:
     def reset_password():
         portal = request.args.get("portal", "admin")
         if request.method == "POST":
-            validate_csrf()
-            portal = request.form.get("portal", portal)
-            allowed_roles = LOGIN_AUDIENCES.get(portal)
-            username = request.form["username"].strip().lower()
-            contact = request.form["contact"].strip().lower()
-            new_password = request.form.get("new_password", "")
-            confirm_password = request.form.get("confirm_password", "")
-            user = User.query.filter_by(username=username).first()
-            saved_contacts = {user.email.lower(), user.phone.lower()} if user else set()
-            if not user or (allowed_roles and user.role not in allowed_roles) or not contact or contact not in saved_contacts:
-                flash("No matching account and saved contact was found for that portal.", "error")
-            elif len(new_password) < 8:
-                flash("New password must be at least 8 characters.", "error")
-            elif new_password != confirm_password:
-                flash("New passwords do not match.", "error")
-            else:
-                user.password_hash = generate_password_hash(new_password)
-                user.must_change_password = False
-                db.session.add(AuditLog(school_id=user.school_id, user_id=user.id, username=user.username, action="password_reset", details="Self-service password reset", ip_address=request.remote_addr or ""))
-                db.session.commit()
-                flash("Password reset successfully. Please login with the new password.", "success")
-                return redirect(url_for("login", portal=portal))
+            username = request.form.get("username", "").strip().lower()
+            db.session.add(AuditLog(username=username, action="password_reset_requested", details="Reset request recorded; administrator verification required", ip_address=client_ip()))
+            db.session.commit()
+            flash("If that account exists, your school administrator will verify the request and issue a temporary password.", "success")
         portal_label = {"admin": "Admin", "teacher": "Teacher", "student": "Student"}.get(portal, "Account")
-        return render("""<main class="login-shell"><section class="card login-card"><h2>Reset {{ portal_label }} Password</h2><p class="muted">Enter your username and saved email or phone, then choose a new password.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}">{{ field('Username','username', required=true) }}{{ field('Saved Email or Phone','contact', required=true) }}{{ field('New Password','new_password','password', required=true) }}{{ field('Confirm New Password','confirm_password','password', required=true) }}<button class="btn green">Reset Password</button></form><p><a class="btn ghost" href="{{ url_for('login', portal=portal) }}">Back to Login</a></p></section></main>""", title="Reset Password", portal=portal, portal_label=portal_label)
+        return render("""<main class="login-shell"><section class="card login-card"><h2>Request {{ portal_label }} Password Reset</h2><p class="muted">For your protection, resets are verified by a school administrator. Enter your username to record a request.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}">{{ field('Username','username', required=true) }}<button class="btn green">Request Reset</button></form><p><a class="btn ghost" href="{{ url_for('login', portal=portal) }}">Back to Login</a></p></section></main>""", title="Reset Password", portal=portal, portal_label=portal_label)
 
     @app.route("/change-password", methods=["GET", "POST"])
     @login_required()
@@ -885,6 +975,8 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("onboarding"))
         if user.role == "student":
             return redirect(url_for("student_results"))
+        if user.role == "parent":
+            return redirect(url_for("parent_portal"))
         sid = user.school_id
         if user.role == "system_admin":
             stats = {"Schools": School.query.count(), "Users": User.query.count(), "Students": Student.query.count(), "Teachers": User.query.filter_by(role="teacher").count()}
@@ -1124,7 +1216,12 @@ def register_routes(app: Flask) -> None:
                 db.session.commit()
                 flash("Teaching assignment removed.", "success")
                 return redirect(url_for("teacher_assignments"))
-            assignment = TeacherAssignment(school_id=sid, teacher_id=int(request.form["teacher_id"]), class_id=int(request.form["class_id"]), subject_id=int(request.form["subject_id"]))
+            teacher = User.query.filter_by(id=safe_int(request.form.get("teacher_id")), school_id=sid, role="teacher", active=True).first()
+            class_group = ClassRoom.query.filter_by(id=safe_int(request.form.get("class_id")), school_id=sid).first()
+            subject = Subject.query.filter_by(id=safe_int(request.form.get("subject_id")), school_id=sid).first()
+            if not teacher or not class_group or not subject:
+                abort(400)
+            assignment = TeacherAssignment(school_id=sid, teacher_id=teacher.id, class_id=class_group.id, subject_id=subject.id, section=request.form.get("section", "").strip(), academic_year=request.form.get("academic_year", "").strip(), term=request.form.get("term", "").strip())
             try:
                 db.session.add(assignment)
                 db.session.commit()
@@ -1136,7 +1233,7 @@ def register_routes(app: Flask) -> None:
         classes = ClassRoom.query.filter_by(school_id=sid).order_by(ClassRoom.name).all()
         subjects = Subject.query.filter_by(school_id=sid).order_by(Subject.name).all()
         assignments = db.session.query(TeacherAssignment, User, ClassRoom, Subject).join(User, TeacherAssignment.teacher_id == User.id).join(ClassRoom, TeacherAssignment.class_id == ClassRoom.id).join(Subject, TeacherAssignment.subject_id == Subject.id).filter(TeacherAssignment.school_id == sid).order_by(User.full_name, ClassRoom.name, Subject.name).all()
-        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>Teaching Assignments</h2><p class="muted">Assign a teacher to any number of class and subject combinations.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}<label>Teacher<select name="teacher_id" required>{% for teacher in teachers %}<option value="{{ teacher.id }}">{{ teacher.full_name }}</option>{% endfor %}</select></label><label>Class<select name="class_id" required>{% for class_group in classes %}<option value="{{ class_group.id }}">{{ class_group.name }}</option>{% endfor %}</select></label><label>Subject<select name="subject_id" required>{% for subject in subjects %}<option value="{{ subject.id }}">{{ subject.name }}</option>{% endfor %}</select></label><button class="btn green">Save Assignment</button></form></article><article class="card"><table><tr><th>Teacher</th><th>Class</th><th>Subject</th><th>Action</th></tr>{% for assignment, teacher, class_group, subject in assignments %}<tr><td>{{ teacher.full_name }}</td><td>{{ class_group.name }}</td><td>{{ subject.name }}</td><td><form method="post">{{ csrf() }}<input type="hidden" name="action" value="remove"><input type="hidden" name="assignment_id" value="{{ assignment.id }}"><button class="btn red">Remove</button></form></td></tr>{% else %}<tr><td colspan="4">No teaching assignments have been created.</td></tr>{% endfor %}</table></article></section></div></main>""", title="Teaching Assignments", teachers=teachers, classes=classes, subjects=subjects, assignments=assignments)
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>Teaching Assignments</h2><p class="muted">Create flexible teacher, class, section, subject, academic-year, and term combinations. A teacher may have any number of assignments.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}<label>Teacher<select name="teacher_id" required>{% for teacher in teachers %}<option value="{{ teacher.id }}">{{ teacher.full_name }}</option>{% endfor %}</select></label><label>Class<select name="class_id" required>{% for class_group in classes %}<option value="{{ class_group.id }}">{{ class_group.name }}</option>{% endfor %}</select></label><label>Subject<select name="subject_id" required>{% for subject in subjects %}<option value="{{ subject.id }}">{{ subject.name }}</option>{% endfor %}</select></label>{{ field('Section','section', placeholder='A, B, Gold') }}{{ field('Academic Year','academic_year', value=school.academic_year, placeholder='2026/2027') }}{{ field('Term','term', value=school.term, placeholder='Term 1') }}<button class="btn green">Save Assignment</button></form></article><article class="card"><div class="table-head"><div><h2>Current Assignments</h2><p class="muted">Teacher access is derived from these records.</p></div><input class="table-search" type="search" placeholder="Search assignments…" aria-label="Search assignments"></div><table><tr><th>Teacher</th><th>Class / Section</th><th>Subject</th><th>Period</th><th>Action</th></tr>{% for assignment, teacher, class_group, subject in assignments %}<tr><td>{{ teacher.full_name }}</td><td>{{ class_group.name }}{% if assignment.section %} · {{ assignment.section }}{% endif %}</td><td>{{ subject.name }}</td><td>{{ assignment.academic_year or 'All years' }} · {{ assignment.term or 'All terms' }}</td><td><form method="post" data-confirm="Remove this teaching assignment?">{{ csrf() }}<input type="hidden" name="action" value="remove"><input type="hidden" name="assignment_id" value="{{ assignment.id }}"><button class="btn red">Remove</button></form></td></tr>{% else %}<tr><td colspan="5"><div class="empty-state"><b>No teaching assignments yet</b><span>Create the first assignment using the form above.</span></div></td></tr>{% endfor %}</table></article></section></div></main>""", title="Teaching Assignments", teachers=teachers, classes=classes, subjects=subjects, assignments=assignments)
 
     @app.route("/classes-subjects", methods=["GET", "POST"])
     @login_required("school_admin")
@@ -1184,7 +1281,7 @@ def register_routes(app: Flask) -> None:
                 if user.role == "teacher":
                     class_ids = teacher_class_ids(user)
                     subject_ids = teacher_subject_ids(user)
-                    if not class_ids or not subject_ids or not student or student.class_id not in class_ids or int(request.form["subject_id"]) not in subject_ids:
+                    if not student or not teacher_can_access(user, student.class_id, int(request.form["subject_id"]), request.form.get("academic_year") or school.academic_year, request.form.get("term") or school.term):
                         raise ValueError("You can only enter scores for your assigned class and subject.")
                     subject_query = subject_query.filter(Subject.id.in_(subject_ids))
                 subject = subject_query.first()
@@ -1383,6 +1480,24 @@ def register_routes(app: Flask) -> None:
             query = query.filter_by(school_id=user.school_id)
         rows = query.order_by(AuditLog.created_at.desc()).limit(100).all()
         return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="card"><h2>Audit Log</h2><table><tr><th>Date</th><th>User</th><th>Action</th><th>Details</th><th>IP</th></tr>{% for r in rows %}<tr><td>{{ fmt_dt(r.created_at, '%Y-%m-%d %H:%M') }}</td><td>{{ r.username }}</td><td>{{ r.action }}</td><td>{{ r.details }}</td><td>{{ r.ip_address }}</td></tr>{% endfor %}</table></section></div></main>""", title="Audit Log", rows=rows)
+
+    @app.route("/parent")
+    @login_required("parent")
+    @school_required
+    def parent_portal():
+        user = current_user()
+        school = current_school()
+        links = db.session.query(ParentStudent, Student, User, ClassRoom).join(Student, ParentStudent.student_id == Student.id).join(User, Student.user_id == User.id).outerjoin(ClassRoom, Student.class_id == ClassRoom.id).filter(ParentStudent.school_id == user.school_id, ParentStudent.parent_id == user.id, Student.school_id == user.school_id).order_by(User.full_name).all()
+        children = []
+        for link, student, child_user, class_group in links:
+            score_rows = db.session.query(Score, Subject).join(Subject, Score.subject_id == Subject.id).filter(Score.school_id == user.school_id, Score.student_id == student.id, Score.term == school.term, Score.academic_year == school.academic_year).order_by(Subject.name).all()
+            attendance = Attendance.query.filter_by(school_id=user.school_id, student_id=student.id, term=school.term, academic_year=school.academic_year).first()
+            fee = Fee.query.filter_by(school_id=user.school_id, student_id=student.id, term=school.term, academic_year=school.academic_year).first()
+            average = round(sum(score.class_score + score.exam_score for score, _ in score_rows) / len(score_rows), 1) if score_rows else 0
+            children.append({"link": link, "student": student, "user": child_user, "class_group": class_group, "scores": score_rows, "attendance": attendance, "fee": fee, "average": average})
+        notices = Announcement.query.filter(Announcement.school_id == user.school_id, Announcement.audience.in_(["all", "parent"])).order_by(Announcement.created_at.desc()).limit(6).all()
+        events = SchoolEvent.query.filter(SchoolEvent.school_id == user.school_id, SchoolEvent.audience.in_(["all", "parent"]), SchoolEvent.event_date >= datetime.utcnow().date()).order_by(SchoolEvent.event_date).limit(6).all()
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card dashboard-hero"><span class="dashboard-kicker">Parent Portal</span><h2>Welcome, {{ user.full_name }}</h2><p class="muted">A secure, read-only view of the children linked to your account.</p></article>{% for child in children %}<article class="card"><div class="table-head"><div><h2>{{ child.user.full_name }}</h2><p class="muted">{{ child.student.admission_no }} · {{ child.class_group.name if child.class_group else 'No class' }} · {{ child.link.relationship }}</p></div><span class="badge">Average {{ child.average }}%</span></div><div class="grid cols-3"><div><b>Attendance</b><p>{{ child.attendance.present_days if child.attendance else 0 }} / {{ child.attendance.total_days if child.attendance else 0 }} days</p></div><div><b>Fee balance</b><p>GH₵ {{ '%.2f'|format((child.fee.amount_due-child.fee.amount_paid) if child.fee else 0) }}</p></div><div><b>Current period</b><p>{{ school.academic_year }} · {{ school.term }}</p></div></div><table><tr><th>Subject</th><th>Class</th><th>Exam</th><th>Total</th><th>Grade</th></tr>{% for score, subject in child.scores %}<tr><td>{{ subject.name }}</td><td>{{ score.class_score }}</td><td>{{ score.exam_score }}</td><td>{{ score.class_score + score.exam_score }}</td><td>{{ grade(score.class_score + score.exam_score) }}</td></tr>{% else %}<tr><td colspan="5"><div class="empty-state"><b>No published results</b><span>Results for this period will appear here.</span></div></td></tr>{% endfor %}</table></article>{% else %}<article class="card empty-state"><b>No children linked</b><span>Ask the school administrator to link your parent account to your child.</span></article>{% endfor %}<div class="grid cols-2"><article class="card"><h2>Announcements</h2>{% for item in notices %}<p><b>{{ item.title }}</b><br><span class="muted">{{ item.body }}</span></p>{% else %}<div class="empty-state"><b>No announcements</b></div>{% endfor %}</article><article class="card"><h2>Upcoming events</h2>{% for item in events %}<p><b>{{ item.title }}</b><br><span class="muted">{{ fmt_dt(item.event_date, '%d %B %Y') }}</span></p>{% else %}<div class="empty-state"><b>No upcoming events</b></div>{% endfor %}</article></div></section></div></main>""", title="Parent Portal", children=children, notices=notices, events=events)
 
     @app.route("/my-results.pdf")
     @login_required("student")

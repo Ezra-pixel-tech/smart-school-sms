@@ -35,14 +35,13 @@ On Windows, you can also double-click:
 start-local.bat
 ```
 
-Default system admin:
+Optional first-run system administrator (set this environment variable before the first start):
 
 ```text
-Username: admin
-Password: admin123
+BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-temporary-password
 ```
 
-Change the default password before real use.
+The username is `admin`; the user must change the bootstrap password at first login. No known default account is created when this variable is absent.
 
 ## School Workflow
 
@@ -99,6 +98,9 @@ SECRET_KEY=replace-with-a-long-random-secret
 FLASK_DEBUG=0
 PORT=5000
 DATABASE_URL=postgresql://username:password@host:5432/database_name
+BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-temporary-password
+SESSION_COOKIE_SECURE=1
+SESSION_LIFETIME_MINUTES=480
 ```
 
 ## Local School Version

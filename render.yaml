@@ -17,3 +17,11 @@ services:
         generateValue: true
       - key: DATABASE_URL
         sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: SESSION_LIFETIME_MINUTES
+        value: "480"
+      - key: LOGIN_RATE_LIMIT_ATTEMPTS
+        value: "5"
+      - key: LOGIN_RATE_LIMIT_WINDOW_SECONDS
+        value: "900"
