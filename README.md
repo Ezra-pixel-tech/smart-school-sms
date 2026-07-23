@@ -114,3 +114,25 @@ http://192.168.1.20:5000
 ```
 
 The school computer should stay on while teachers and students are using the system.
+
+## Student report payments, data import, and password reset
+
+- Students pay the configured `STUDENT_REPORT_FEE` (default GH₵10) for the current academic year and term before report HTML/PDF access. Paystack is verified server-side; configure the Paystack webhook as `APP_URL/payments/paystack/unified-webhook` so both parent and student payments are handled.
+- School administrators can open **Students → Import Students or Teachers**, upload CSV or XLSX, review validation errors, choose **skip** or **update** for duplicates, commit valid rows, and view the saved import report.
+- Administrator password resets use Resend. Verify the sender domain in Resend, set `RESEND_API_KEY`, `EMAIL_FROM`, and the public HTTPS `APP_URL`. Reset links expire after `PASSWORD_RESET_EXPIRY_MINUTES` and are single-use.
+
+Never commit real Paystack or Resend keys. Add them only in the host environment. New database tables are created safely at application startup by SQLAlchemy: `student_report_payments`, `password_reset_tokens`, and `bulk_import_jobs`.
+
+### Import columns
+
+Student required columns: `full_name, username, admission_no, class`. Optional: `email, phone, guardian_name, guardian_email, guardian_phone, password`. The class must already exist.
+
+Teacher required columns: `full_name, username`. Optional: `email, phone, password`.
+
+### Manual test checklist
+
+1. Sign in as a student with an email (or guardian email), open My Results, complete a GH₵10 Paystack test payment, and verify HTML/PDF access unlocks only for the current term.
+2. Confirm an unpaid student cannot see scores on the dashboard, report page, or PDF endpoint.
+3. Confirm an existing paid parent can still open the linked child's report.
+4. Import a CSV/XLSX with valid, invalid, and duplicate student/teacher rows; preview it, test skip/update, and check the final report.
+5. Request an admin reset by email, use the link once, confirm the new password works, then confirm reuse and expiry are rejected.
