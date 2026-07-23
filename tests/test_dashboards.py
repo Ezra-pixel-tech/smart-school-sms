@@ -93,6 +93,13 @@ class DashboardTests(unittest.TestCase):
         student.class_id = class_group.id
         student.promotion_note = "Promoted from JHS 1 to JHS 2"
         run.db.session.commit()
+        Payment = run.app.feature_models["StudentReportPayment"]
+        run.db.session.add(Payment(
+            school_id=self.school.id, user_id=self.users["student"].id, student_id=student.id,
+            academic_year=self.school.academic_year, term=self.school.term,
+            reference="student-report-existing-test", amount_subunit=1000,
+            currency="GHS", status="success"))
+        run.db.session.commit()
         client = run.app.test_client()
         with client.session_transaction() as session:
             session["user_id"] = self.users["student"].id
@@ -100,6 +107,34 @@ class DashboardTests(unittest.TestCase):
         html = client.get("/my-results").get_data(as_text=True)
         self.assertIn("JHS 2", html)
         self.assertIn("Promoted from JHS 1 to JHS 2", html)
+
+    def test_student_report_is_locked_without_payment(self):
+        Payment = run.app.feature_models["StudentReportPayment"]
+        Payment.query.filter_by(user_id=self.users["student"].id).delete()
+        run.db.session.commit()
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = self.users["student"].id
+            session["_csrf"] = "test-csrf"
+        response = client.get("/my-results")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/student/report/payment", response.location)
+        pdf = client.get("/my-results.pdf")
+        self.assertEqual(pdf.status_code, 302)
+
+    def test_admin_forgot_password_uses_generic_response(self):
+        self.users["school_admin"].email = "admin-reset@example.com"
+        run.db.session.commit()
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["_csrf"] = "test-csrf"
+        with patch("smart_features._send_resend") as sender:
+            response = client.post("/forgot-password", data={
+                "_csrf": "test-csrf", "email": "admin-reset@example.com"
+            }, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("If that administrator email exists", response.get_data(as_text=True))
+        sender.assert_called_once()
 
     def test_parent_report_is_locked_until_verified_payment(self):
         client = run.app.test_client()
