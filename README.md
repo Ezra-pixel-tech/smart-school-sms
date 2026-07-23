@@ -98,7 +98,7 @@ SECRET_KEY=replace-with-a-long-random-secret
 FLASK_DEBUG=0
 PORT=5000
 DATABASE_URL=postgresql://username:password@host:5432/database_name
-BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-temporary-password
+    BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-temporary-password
 SESSION_COOKIE_SECURE=1
 SESSION_LIFETIME_MINUTES=480
 ```
