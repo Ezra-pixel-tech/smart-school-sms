@@ -477,7 +477,7 @@ def register_feature_routes(app, ctx):
                                                    guardian_email=row.get("guardian_email", ""),
                                                    guardian_phone=row.get("guardian_phone", "")))
                             created += 1
-                    db.session.flush()
+                    db.session.commit()
                 except Exception as exc:
                     db.session.rollback()
                     runtime_errors.append({"row": row.get("_row"), "error": str(exc)})
