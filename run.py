@@ -71,6 +71,8 @@ def create_app() -> Flask:
                             x_proto=proxy_count, x_host=proxy_count)
     db.init_app(app)
     register_routes(app)
+    from smart_features import register_feature_routes
+    register_feature_routes(app, globals())
     return app
 
 
@@ -777,7 +779,7 @@ def csrf_token() -> str:
 
 
 def validate_csrf() -> None:
-    if request.endpoint == "paystack_webhook":
+    if request.endpoint in {"paystack_webhook", "paystack_unified_webhook"}:
         return
     if request.method == "POST" and request.form.get("_csrf") != session.get("_csrf"):
         abort(400)
@@ -1316,7 +1318,7 @@ def register_routes(app: Flask) -> None:
                         "student": "Student Login"}.get(portal, "Login")
         visual = portal if portal in {
             "admin", "teacher", "student"} else "admin"
-        return render("""<main class="login-shell"><section class="card login-card"><div class="login-visual {{ visual }}"></div><h2>{{ portal_label }}</h2><p class="muted">Choose the correct portal for your account.</p><div class="actions"><a class="btn ghost" href="{{ url_for('login', portal='admin') }}">Admin</a><a class="btn ghost" href="{{ url_for('login', portal='teacher') }}">Teacher</a><a class="btn ghost" href="{{ url_for('login', portal='student') }}">Student</a><a class="btn ghost" href="{{ url_for('login', portal='parent') }}">Parent</a></div>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}">{{ field('Username','username', required=true) }}{{ field('Password','password','password', required=true) }}<button class="btn">Login</button></form><p><a class="btn ghost" href="{{ url_for('reset_password', portal=portal) }}">Reset Password</a></p><p class="muted">Use the credentials issued by your school administrator.</p></section></main>""", title=portal_label, portal=portal, portal_label=portal_label, visual=visual)
+        return render("""<main class="login-shell"><section class="card login-card"><div class="login-visual {{ visual }}"></div><h2>{{ portal_label }}</h2><p class="muted">Choose the correct portal for your account.</p><div class="actions"><a class="btn ghost" href="{{ url_for('login', portal='admin') }}">Admin</a><a class="btn ghost" href="{{ url_for('login', portal='teacher') }}">Teacher</a><a class="btn ghost" href="{{ url_for('login', portal='student') }}">Student</a><a class="btn ghost" href="{{ url_for('login', portal='parent') }}">Parent</a></div>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}">{{ field('Username','username', required=true) }}{{ field('Password','password','password', required=true) }}<button class="btn">Login</button></form><p><a class="btn ghost" href="{{ url_for('forgot_password', portal=portal) }}">Reset Password</a></p><p class="muted">Use the credentials issued by your school administrator.</p></section></main>""", title=portal_label, portal=portal, portal_label=portal_label, visual=visual)
 
     @app.route("/reset-password", methods=["GET", "POST"])
     def reset_password():
@@ -1382,6 +1384,8 @@ def register_routes(app: Flask) -> None:
                 user_id=user.id, school_id=user.school_id).first()
             scores = db.session.query(Score, Subject).join(Subject, Score.subject_id == Subject.id).filter(Score.school_id == user.school_id, Score.student_id ==
                                                                                                            student.id, Score.term == school.term, Score.academic_year == school.academic_year).order_by(Score.updated_at.desc()).limit(8).all() if student else []
+            if student and not app.student_report_is_paid(student, school, user):
+                scores = []
             attendance = Attendance.query.filter_by(school_id=user.school_id, student_id=student.id,
                                                     term=school.term, academic_year=school.academic_year).first() if student else None
             fee = Fee.query.filter_by(school_id=user.school_id, student_id=student.id,
@@ -1636,7 +1640,7 @@ def register_routes(app: Flask) -> None:
         students = students_query.order_by(User.full_name).all()
         classes = ClassRoom.query.filter_by(
             school_id=sid).order_by(ClassRoom.name).all()
-        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>{{ 'My Students' if user.role == 'teacher' else 'Students & Admissions' }}</h2>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}{{ field('Full Name','full_name',required=true) }}{{ field('Admission No','admission_no',required=true) }}{{ field('Username','username',required=true) }}{{ field('Temporary Password','password','password', placeholder='Leave blank to auto-generate') }}{% if user.role != 'teacher' %}<label>Class<select name="class_id" required>{% for class_group in classes %}<option value="{{ class_group.id }}">{{ class_group.name }}</option>{% endfor %}</select></label>{% endif %}{{ field('Guardian / Parent Name','guardian_name',required=true) }}{{ field('Guardian Phone','guardian_phone') }}{{ field('Guardian Email','guardian_email','email') }}{{ field('Parent Login Username','parent_username',placeholder='Required for a new parent') }}{{ field('Parent Temporary Password','parent_password','password',placeholder='Leave blank to auto-generate') }}<button class="btn green">Add Student & Link Parent</button></form></article><article class="card"><table><tr><th>Name</th><th>Username</th><th>Admission No</th><th>Class</th><th>Guardian</th><th>Action</th></tr>{% for st, u, c in students %}<tr><td>{{ u.full_name }}</td><td>{{ u.username }}</td><td>{{ st.admission_no }}</td><td>{{ c.name if c else '-' }}</td><td>{{ st.guardian_name }} {{ st.guardian_phone }}</td><td>{% if user.role == 'school_admin' %}<div class="actions"><form method="post">{{ csrf() }}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn ghost">Reset Password</button></form><form method="post" onsubmit="return confirm('Delete this student?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn red">Delete</button></form></div>{% endif %}</td></tr>{% endfor %}</table></article></section></div></main>""", title="Students", students=students, classes=classes)
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>{{ 'My Students' if user.role == 'teacher' else 'Students & Admissions' }}</h2>{% if user.role == 'school_admin' %}<p><a class="btn ghost" href="{{ url_for('bulk_import') }}">Import Students or Teachers</a></p>{% endif %}{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}{{ field('Full Name','full_name',required=true) }}{{ field('Admission No','admission_no',required=true) }}{{ field('Username','username',required=true) }}{{ field('Temporary Password','password','password', placeholder='Leave blank to auto-generate') }}{% if user.role != 'teacher' %}<label>Class<select name="class_id" required>{% for class_group in classes %}<option value="{{ class_group.id }}">{{ class_group.name }}</option>{% endfor %}</select></label>{% endif %}{{ field('Guardian / Parent Name','guardian_name',required=true) }}{{ field('Guardian Phone','guardian_phone') }}{{ field('Guardian Email','guardian_email','email') }}{{ field('Parent Login Username','parent_username',placeholder='Required for a new parent') }}{{ field('Parent Temporary Password','parent_password','password',placeholder='Leave blank to auto-generate') }}<button class="btn green">Add Student & Link Parent</button></form></article><article class="card"><table><tr><th>Name</th><th>Username</th><th>Admission No</th><th>Class</th><th>Guardian</th><th>Action</th></tr>{% for st, u, c in students %}<tr><td>{{ u.full_name }}</td><td>{{ u.username }}</td><td>{{ st.admission_no }}</td><td>{{ c.name if c else '-' }}</td><td>{{ st.guardian_name }} {{ st.guardian_phone }}</td><td>{% if user.role == 'school_admin' %}<div class="actions"><form method="post">{{ csrf() }}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn ghost">Reset Password</button></form><form method="post" onsubmit="return confirm('Delete this student?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn red">Delete</button></form></div>{% endif %}</td></tr>{% endfor %}</table></article></section></div></main>""", title="Students", students=students, classes=classes)
 
     @app.route("/promotions", methods=["GET", "POST"])
     @login_required("school_admin", "teacher")
@@ -2395,6 +2399,10 @@ def register_routes(app: Flask) -> None:
         user = current_user()
         school = current_school()
         student = Student.query.filter_by(user_id=user.id).first()
+        if not student:
+            abort(404)
+        if not app.student_report_is_paid(student, school, user):
+            return redirect(url_for("student_report_payment"))
         student_class = db.session.get(
             ClassRoom, student.class_id) if student and student.class_id else None
         rows = db.session.query(Score, Subject).join(Subject, Score.subject_id == Subject.id).filter(
@@ -2460,6 +2468,8 @@ def register_routes(app: Flask) -> None:
         student = Student.query.filter_by(user_id=user.id).first()
         if not student:
             abort(404)
+        if not app.student_report_is_paid(student, school, user):
+            return redirect(url_for("student_report_payment"))
         return render(REPORT_CARD_PAGE, title="Academic Report Card",
                       **build_report_context(student, school, user))
         rows = db.session.query(Score, Subject).join(Subject, Score.subject_id == Subject.id).filter(
