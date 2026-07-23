@@ -8,6 +8,8 @@ import json
 import os
 import re
 import secrets
+
+import resend
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.error import HTTPError, URLError
@@ -104,14 +106,24 @@ def _paystack(secret, path, method="GET", payload=None):
     return result
 
 
+def _clean_env(name):
+    """Read Render variables without accidental whitespace or wrapping quotes."""
+    return os.getenv(name, "").strip().strip('"').strip("'")
+
+
 def _send_resend(to_email, reset_url, user_name):
-    api_key = os.getenv("RESEND_API_KEY", "")
-    sender = os.getenv("EMAIL_FROM", "")
+    api_key = _clean_env("RESEND_API_KEY")
+    sender = _clean_env("EMAIL_FROM")
+    recipient = (to_email or "").strip().lower()
     if not api_key or not sender:
-        raise RuntimeError("Resend is not configured")
-    payload = {
+        raise RuntimeError("RESEND_API_KEY and EMAIL_FROM must be configured")
+    if not recipient:
+        raise RuntimeError("The administrator account has no email address")
+
+    resend.api_key = api_key
+    params = {
         "from": sender,
-        "to": [to_email],
+        "to": [recipient],
         "subject": "Reset your Smart Schools SMS password",
         "html": (
             "<p>Hello " + user_name + ",</p>"
@@ -120,15 +132,16 @@ def _send_resend(to_email, reset_url, user_name):
             "<p>If you did not request this, you can ignore this email.</p>"
         ),
     }
-    req = Request("https://api.resend.com/emails", data=json.dumps(payload).encode(), method="POST",
-                  headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"})
     try:
-        with urlopen(req, timeout=20) as response:
-            result = json.loads(response.read().decode())
-    except (HTTPError, URLError, TimeoutError, ValueError) as exc:
-        raise RuntimeError("Reset email could not be sent") from exc
-    if not result.get("id"):
-        raise RuntimeError("Resend did not accept the reset email")
+        result = resend.Emails.send(params)
+    except Exception as exc:
+        # Resend's SDK includes the HTTP status and API message (for example,
+        # an unverified sender domain) without exposing the API key.
+        raise RuntimeError(f"Resend rejected the reset email: {exc}") from exc
+
+    email_id = result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
+    if not email_id:
+        raise RuntimeError("Resend accepted no email ID for the reset request")
 
 
 def _rows_from_upload(upload):
