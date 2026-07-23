@@ -1,6 +1,10 @@
 import os
+import hashlib
+import hmac
+import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("FLASK_DEBUG", "1")
 os.environ.setdefault("BOOTSTRAP_ADMIN_PASSWORD", "TestBootstrap@123")
@@ -27,6 +31,19 @@ class DashboardTests(unittest.TestCase):
         student_account = cls.users["student"]
         run.db.session.add(run.Student(school_id=cls.school.id, user_id=student_account.id, admission_no="TEST001"))
         run.db.session.commit()
+        cls.student = run.Student.query.filter_by(user_id=student_account.id).first()
+        cls.parent = run.User(school_id=cls.school.id, role="parent", full_name="Test Parent",
+                              username="dashboard_parent", email="parent@example.com",
+                              password_hash=generate_password_hash("Test@12345"), must_change_password=False)
+        run.db.session.add(cls.parent)
+        run.db.session.flush()
+        run.db.session.add(run.ParentStudent(
+            school_id=cls.school.id, parent_id=cls.parent.id, student_id=cls.student.id))
+        run.db.session.commit()
+        run.Config.PAYSTACK_SECRET_KEY = "sk_test_for_unit_tests_only"
+        run.Config.PAYSTACK_PUBLIC_KEY = "pk_test_for_unit_tests_only"
+        run.Config.PARENT_REPORT_FEE = "10.00"
+        run.Config.PAYSTACK_CURRENCY = "GHS"
 
     @classmethod
     def tearDownClass(cls):
@@ -83,6 +100,55 @@ class DashboardTests(unittest.TestCase):
         html = client.get("/my-results").get_data(as_text=True)
         self.assertIn("JHS 2", html)
         self.assertIn("Promoted from JHS 1 to JHS 2", html)
+
+    def test_parent_report_is_locked_until_verified_payment(self):
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = self.parent.id
+            session["_csrf"] = "test-csrf"
+        response = client.get(f"/parent/report/{self.student.id}")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/payment", response.location)
+
+        with patch("run.paystack_request") as paystack:
+            paystack.return_value = {"status": True, "data": {
+                "authorization_url": "https://checkout.paystack.com/test-access",
+                "reference": "ignored",
+            }}
+            initialized = client.post(
+                f"/parent/report/{self.student.id}/paystack",
+                data={"_csrf": "test-csrf"})
+        self.assertEqual(initialized.status_code, 302)
+        self.assertTrue(initialized.location.startswith("https://checkout.paystack.com/"))
+        payment = run.ParentReportPayment.query.filter_by(
+            parent_id=self.parent.id, student_id=self.student.id).order_by(
+            run.ParentReportPayment.id.desc()).first()
+        self.assertEqual(payment.status, "pending")
+
+        with patch("run.paystack_request") as paystack:
+            paystack.return_value = {"status": True, "data": {
+                "status": "success", "reference": payment.reference,
+                "amount": 1000, "currency": "GHS", "id": 12345,
+            }}
+            verified = client.get(
+                f"/payments/paystack/callback?reference={payment.reference}",
+                follow_redirects=True)
+        self.assertEqual(verified.status_code, 200)
+        self.assertIn("ACADEMIC REPORT CARD", verified.get_data(as_text=True))
+        self.assertEqual(payment.status, "success")
+
+    def test_paystack_webhook_requires_valid_signature(self):
+        body = json.dumps({"event": "charge.success", "data": {
+            "reference": "unknown-reference"}}).encode()
+        client = run.app.test_client()
+        self.assertEqual(client.post("/payments/paystack/webhook", data=body,
+                                    content_type="application/json").status_code, 401)
+        signature = hmac.new(run.Config.PAYSTACK_SECRET_KEY.encode(),
+                             body, hashlib.sha512).hexdigest()
+        response = client.post("/payments/paystack/webhook", data=body,
+                               content_type="application/json",
+                               headers={"x-paystack-signature": signature})
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":

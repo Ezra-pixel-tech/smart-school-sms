@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import os
 import secrets
+import hashlib
+import hmac
+import json
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 from flask import Flask, Response, abort, flash, redirect, render_template_string, request, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import Index, UniqueConstraint, event, text
+from sqlalchemy import Index, UniqueConstraint, event, or_, text
 from sqlalchemy.engine import Engine
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -190,6 +197,28 @@ class ParentStudent(db.Model):
         "parent_id", "student_id", name="uq_parent_student"),)
 
 
+class ParentReportPayment(db.Model):
+    __tablename__ = "parent_report_payments"
+    id = db.Column(db.Integer, primary_key=True)
+    school_id = db.Column(db.Integer, db.ForeignKey(
+        "schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_id = db.Column(db.Integer, db.ForeignKey(
+        "users.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id = db.Column(db.Integer, db.ForeignKey(
+        "students.id", ondelete="CASCADE"), nullable=False, index=True)
+    academic_year = db.Column(db.String(40), nullable=False, index=True)
+    term = db.Column(db.String(40), nullable=False, index=True)
+    reference = db.Column(db.String(120), nullable=False, unique=True, index=True)
+    amount_subunit = db.Column(db.Integer, nullable=False)
+    currency = db.Column(db.String(10), nullable=False)
+    status = db.Column(db.String(30), default="pending", nullable=False, index=True)
+    authorization_url = db.Column(db.String(500), default="")
+    provider_transaction_id = db.Column(db.String(80), default="")
+    paid_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
 class Score(db.Model):
     __tablename__ = "scores"
     id = db.Column(db.Integer, primary_key=True)
@@ -367,6 +396,10 @@ Index("ix_users_role_school", User.school_id, User.role)
 Index("ix_students_school_class", Student.school_id, Student.class_id)
 Index("ix_parent_students_scope", ParentStudent.school_id,
       ParentStudent.parent_id, ParentStudent.student_id)
+Index("ix_parent_report_payment_unlock", ParentReportPayment.school_id,
+      ParentReportPayment.parent_id, ParentReportPayment.student_id,
+      ParentReportPayment.academic_year, ParentReportPayment.term,
+      ParentReportPayment.status)
 Index("ix_attendance_student_period", Attendance.student_id,
       Attendance.term, Attendance.academic_year)
 Index("ix_fees_student_period", Fee.student_id, Fee.term, Fee.academic_year)
@@ -687,6 +720,8 @@ def delete_school_records(school_id: int) -> None:
         if student_ids:
             model.query.filter(model.student_id.in_(
                 student_ids)).delete(synchronize_session=False)
+    ParentReportPayment.query.filter_by(
+        school_id=school_id).delete(synchronize_session=False)
     ParentStudent.query.filter_by(
         school_id=school_id).delete(synchronize_session=False)
     for model in [Timetable, Announcement, SchoolEvent, LibraryResource, Communication, AuditLog, Subject, ClassRoom, Student]:
@@ -742,8 +777,129 @@ def csrf_token() -> str:
 
 
 def validate_csrf() -> None:
+    if request.endpoint == "paystack_webhook":
+        return
     if request.method == "POST" and request.form.get("_csrf") != session.get("_csrf"):
         abort(400)
+
+
+def report_fee_subunit() -> int:
+    try:
+        amount = Decimal(str(Config.PARENT_REPORT_FEE))
+    except (InvalidOperation, TypeError):
+        raise RuntimeError("PARENT_REPORT_FEE must be a valid amount")
+    if amount < 0:
+        raise RuntimeError("PARENT_REPORT_FEE cannot be negative")
+    return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def paystack_request(path: str, method: str = "GET", payload: dict | None = None) -> dict:
+    secret = Config.PAYSTACK_SECRET_KEY
+    if not secret:
+        raise RuntimeError("Paystack is not configured")
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = Request(
+        f"https://api.paystack.co{path}",
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(req, timeout=20) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, ValueError) as exc:
+        raise RuntimeError("The payment service could not be reached") from exc
+    if not result.get("status"):
+        raise RuntimeError(result.get("message") or "Paystack rejected the request")
+    return result
+
+
+def report_payment_for(parent_id: int, student_id: int, school: School):
+    return ParentReportPayment.query.filter_by(
+        school_id=school.id,
+        parent_id=parent_id,
+        student_id=student_id,
+        academic_year=school.academic_year,
+        term=school.term,
+        amount_subunit=report_fee_subunit(),
+        currency=Config.PAYSTACK_CURRENCY,
+        status="success",
+    ).order_by(ParentReportPayment.paid_at.desc()).first()
+
+
+def verify_report_payment(payment: ParentReportPayment) -> bool:
+    result = paystack_request(
+        f"/transaction/verify/{quote(payment.reference, safe='')}")
+    transaction = result.get("data") or {}
+    valid = (
+        transaction.get("status") == "success"
+        and str(transaction.get("reference")) == payment.reference
+        and int(transaction.get("amount") or -1) == payment.amount_subunit
+        and str(transaction.get("currency") or "").upper() == payment.currency
+    )
+    payment.status = "success" if valid else "failed"
+    payment.provider_transaction_id = str(transaction.get("id") or "")[:80]
+    payment.updated_at = datetime.utcnow()
+    if valid and not payment.paid_at:
+        payment.paid_at = datetime.utcnow()
+    db.session.commit()
+    return valid
+
+
+def build_report_context(student: Student, school: School, report_user: User) -> dict:
+    rows = db.session.query(Score, Subject).join(
+        Subject, Score.subject_id == Subject.id
+    ).filter(
+        Score.school_id == school.id,
+        Score.student_id == student.id,
+        Score.term == school.term,
+        Score.academic_year == school.academic_year,
+    ).order_by(Subject.name).all()
+    attendance = Attendance.query.filter_by(
+        school_id=school.id, student_id=student.id,
+        term=school.term, academic_year=school.academic_year).first()
+    fees = Fee.query.filter_by(
+        school_id=school.id, student_id=student.id,
+        term=school.term, academic_year=school.academic_year).first()
+    total = sum(sc.class_score + sc.exam_score for sc, _ in rows)
+    average = round(total / len(rows), 2) if rows else 0
+    detail = StudentReportDetail.query.filter_by(
+        student_id=student.id, term=school.term,
+        academic_year=school.academic_year).first()
+    term_summary = []
+    for term_name in ["Term 1", "Term 2", "Term 3"]:
+        term_scores = Score.query.filter_by(
+            student_id=student.id, term=term_name,
+            academic_year=school.academic_year).all()
+        term_total = round(sum(sc.class_score + sc.exam_score for sc in term_scores), 2)
+        term_summary.append({"total": term_total, "average": round(
+            term_total / len(term_scores), 2) if term_scores else 0})
+    yearly_total = round(sum(item["total"] for item in term_summary), 2)
+    non_empty = [item for item in term_summary if item["total"]]
+    return {
+        "student": student,
+        "report_user": report_user,
+        "student_class": db.session.get(ClassRoom, student.class_id) if student.class_id else None,
+        "rows": rows,
+        "attendance": attendance,
+        "fees": fees,
+        "average": average,
+        "report_total": total,
+        "conduct": next((sc.conduct for sc, _ in rows if sc.conduct), ""),
+        "position": next((sc.position for sc, _ in rows if sc.position), ""),
+        "overall": grade_info(average),
+        "detail": detail,
+        "term_summary": term_summary,
+        "yearly_total": yearly_total,
+        "yearly_average": round(sum(item["average"] for item in non_empty) / len(non_empty), 2) if non_empty else 0,
+        "fee_breakdown_total": round(sum([
+            detail.arrears, detail.tuition_fees, detail.pta_dues,
+            detail.medical_dues, detail.building_fund]), 2) if detail else 0,
+    }
 
 
 def save_crest(file_storage) -> str:
@@ -1029,17 +1185,18 @@ STUDENT_DASHBOARD_PAGE = """
 
 REPORT_CARD_PAGE = """
 <main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="report-sheet">
-<div class="report-actions no-print"><button class="btn" onclick="window.print()">Print Report</button><a class="btn ghost" href="{{ url_for('student_results_pdf') }}">Download PDF</a></div>
+<style>.attendance-line{border:1px solid #444;border-radius:8px;padding:10px;text-align:center}@media print{@page{size:A4;margin:5mm}.report-sheet{zoom:.78;break-inside:avoid;padding:0!important;border:0!important}.report-sheet th,.report-sheet td{padding:2px!important;font-size:7px!important}.report-brand{padding:6px!important}.report-brand img{width:50px!important;height:50px!important}.student-report-meta{padding:3px!important}.student-report-meta p,.next-term{margin:2px!important}.print-chart{margin:4px 0!important;padding:4px!important}.report-bars{gap:2px!important}.report-bar-row>div{height:6px!important}.report-two-col,.remarks-lines,.signature-promotion{margin-top:4px!important}.remarks-lines p{min-height:12px!important;margin:2px!important}.signature-promotion{margin:4px 0!important;padding:4px!important}.signature-promotion img{max-height:24px!important}}</style>
+<div class="report-actions no-print"><button class="btn" onclick="window.print()">Print Report</button>{% if user.role == 'student' %}<a class="btn ghost" href="{{ url_for('student_results_pdf') }}">Download PDF</a>{% endif %}</div>
 <header class="academic-report-head"><div class="report-brand">{% if school.crest %}<img src="{{ url_for('uploads',filename=school.crest) }}" alt="{{ school.name }} crest">{% endif %}<div><h1>{{ school.name }}</h1><p>ACADEMIC REPORT CARD</p></div></div><div class="school-contact"><b>School Address:</b> {{ school.address or '-' }}<br><b>Phone:</b> {{ school.phone or '-' }}<br><b>Email:</b> {{ school.email or '-' }}</div></header>
-<div class="student-report-meta"><div><p><b>NAME:</b> {{ user.full_name }}</p><p><b>CLASS:</b> {{ student_class.name if student_class else '-' }}</p><p><b>ADMISSION NO:</b> {{ student.admission_no }}</p></div><div><p><b>NO. ON ROLL:</b> {{ detail.number_on_roll if detail else 0 }}</p><p><b>TERM:</b> {{ school.term }}</p><p><b>YEAR:</b> {{ school.academic_year }}</p></div></div>
+<div class="student-report-meta"><div><p><b>NAME:</b> {{ report_user.full_name }}</p><p><b>CLASS:</b> {{ student_class.name if student_class else '-' }}</p><p><b>ADMISSION NO:</b> {{ student.admission_no }}</p></div><div><p><b>NO. ON ROLL:</b> {{ detail.number_on_roll if detail else 0 }}</p><p><b>TERM:</b> {{ school.term }}</p><p><b>YEAR:</b> {{ school.academic_year }}</p></div></div>
 <p class="next-term"><b>NEXT TERM BEGINNING:</b> {{ fmt_dt(detail.next_term_begins,'%d %B %Y') if detail and detail.next_term_begins else '-' }}</p>
 <table class="report-subjects"><thead><tr><th>SUBJECT</th><th>CA<br>30%</th><th>EXAM<br>70%</th><th>TOTAL<br>100%</th><th>GRADE</th><th>REMARKS</th></tr></thead><tbody>{% for score,subject in rows %}{% set subject_total=score.class_score+score.exam_score %}<tr><td>{{ subject.name }}</td><td>{{ score.class_score }}</td><td>{{ score.exam_score }}</td><td>{{ subject_total }}</td><td>{{ grade(subject_total) }}</td><td>{{ score.remarks or grade_info(subject_total).interpretation }}</td></tr>{% else %}<tr><td colspan="6">No subject results entered.</td></tr>{% endfor %}<tr class="report-total"><td>TOTAL / AVERAGE</td><td colspan="2"></td><td>{{ report_total }} / {{ average }}%</td><td>{{ overall.grade }}</td><td>{{ overall.interpretation }}</td></tr></tbody></table>
 <section class="print-chart"><h2>SUBJECT PERFORMANCE GRAPH</h2><div class="report-bars">{% for score,subject in rows %}<div class="report-bar-row"><span>{{ subject.name }}</span><div><i style="width:{{ [score.class_score+score.exam_score,100]|min }}%"></i></div><b>{{ score.class_score+score.exam_score }}%</b></div>{% endfor %}</div></section>
 <table class="report-summary"><tr><th colspan="7">SUMMARY</th></tr><tr><th>DETAIL</th><th>1ST TERM</th><th>2ND TERM</th><th>3RD TERM</th><th>TOTAL</th><th>AVERAGE</th><th>POSITION</th></tr><tr><td>TOTAL MARKS OBTAINED</td>{% for item in term_summary %}<td>{{ item.total }}</td>{% endfor %}<td>{{ yearly_total }}</td><td>{{ yearly_average }}</td><td>{{ position or '-' }}</td></tr><tr><td>PERCENTAGE (%)</td>{% for item in term_summary %}<td>{{ item.average }}</td>{% endfor %}<td colspan="3"></td></tr></table>
-<div class="report-two-col"><div><h3>ATTENDANCE</h3><table><tr><th>PRESENT</th><th>ABSENT</th><th>LATE</th></tr><tr><td>{{ attendance.present_days if attendance else 0 }}</td><td>{{ detail.absent_days if detail else 0 }}</td><td>{{ detail.late_days if detail else 0 }}</td></tr></table></div><div><h3>KEY TO GRADES</h3><table><tr><th>GRADE</th><th>RANGE</th><th>REMARKS</th></tr><tr><td>A1</td><td>80-100</td><td>Excellent</td></tr><tr><td>B2/B3</td><td>65-79</td><td>Good</td></tr><tr><td>C4-C6</td><td>50-64</td><td>Credit</td></tr><tr><td>D7/E8</td><td>40-49</td><td>Pass</td></tr><tr><td>F9</td><td>0-39</td><td>Fail</td></tr></table></div></div>
+<div class="report-two-col"><div><h3>ATTENDANCE</h3><p class="attendance-line"><b>Days Present:</b> {{ attendance.present_days if attendance else 0 }} &nbsp; out of &nbsp; <b>Overall School Days:</b> {{ attendance.total_days if attendance else 0 }}</p></div><div><h3>KEY TO GRADES</h3><table><tr><th>GRADE</th><th>RANGE</th><th>REMARKS</th></tr><tr><td>A1</td><td>80-100</td><td>Excellent</td></tr><tr><td>B2/B3</td><td>65-79</td><td>Good</td></tr><tr><td>C4-C6</td><td>50-64</td><td>Credit</td></tr><tr><td>D7/E8</td><td>40-49</td><td>Pass</td></tr><tr><td>F9</td><td>0-39</td><td>Fail</td></tr></table></div></div>
 <div class="remarks-lines"><p><b>CLASS TEACHER'S REMARKS:</b> {{ detail.class_teacher_remarks if detail else overall.interpretation }}</p><p><b>HEAD TEACHER'S REMARKS:</b> {{ detail.head_teacher_remarks if detail else '' }}</p><p><b>INTEREST:</b> {{ detail.interest if detail else '' }} &nbsp; <b>ATTITUDE:</b> {{ detail.attitude if detail else '' }} &nbsp; <b>CONDUCT:</b> {{ conduct or 'Good' }}</p></div>
 <div class="signature-promotion"><div><b>{{ school.head_title or 'Head Teacher' }}</b>{% if school.head_signature %}<img src="{{ url_for('uploads',filename=school.head_signature) }}" alt="Head signature">{% endif %}<span>{{ school.head_name }}</span></div><div><b>PROMOTED TO</b><strong>{{ student_class.name if student.promotion_note else '—' }}</strong><span>{{ student.promotion_note or 'Not promoted' }}</span></div></div>
-<div class="report-two-col fees-sign"><div><h3>FEES</h3><table><tr><th>DETAIL</th><th>GHS</th></tr><tr><td>Arrears from last term</td><td>{{ detail.arrears if detail else 0 }}</td></tr><tr><td>Tuition / School fees</td><td>{{ detail.tuition_fees if detail else 0 }}</td></tr><tr><td>PTA dues</td><td>{{ detail.pta_dues if detail else 0 }}</td></tr><tr><td>Medical dues</td><td>{{ detail.medical_dues if detail else 0 }}</td></tr><tr><td>Building fund</td><td>{{ detail.building_fund if detail else 0 }}</td></tr><tr><th>TOTAL</th><th>{{ fee_breakdown_total }}</th></tr></table></div><div class="report-date"><b>Date:</b> {{ now.strftime('%d / %m / %Y') }}<br><br><b>Head Teacher's Signature:</b> ____________________</div></div>
+<div class="report-two-col fees-sign"><div><h3>FEES</h3><p><b>Current balance:</b> GHS {{ ((fees.amount_due-fees.amount_paid) if fees else fee_breakdown_total) }}</p></div><div><b>Date:</b> {{ now.strftime('%d / %m / %Y') }}</div></div>
 </section></div></main>
 """
 
@@ -1426,10 +1583,13 @@ def register_routes(app: Flask) -> None:
                     flash(
                         "Student password reset. Print the new login slip.", "success")
                     return redirect(url_for("login_slip"))
-            elif user.role == "teacher":
-                if not class_ids:
+            elif user.role in {"school_admin", "registrar", "receptionist", "teacher"}:
+                admission_class_id = class_ids[0] if user.role == "teacher" and class_ids else safe_int(request.form.get("class_id"))
+                admission_class = ClassRoom.query.filter_by(
+                    id=admission_class_id, school_id=sid).first()
+                if not admission_class:
                     flash(
-                        "No class has been assigned to you yet. Ask the school admin to assign your class.", "error")
+                        "Choose a valid class. Teachers must first be assigned to a class.", "error")
                 else:
                     try:
                         password = request.form["password"] or generate_temporary_password(
@@ -1438,8 +1598,30 @@ def register_routes(app: Flask) -> None:
                         ), username=request.form["username"].strip().lower(), password_hash=generate_password_hash(password), must_change_password=True)
                         db.session.add(new_user)
                         db.session.flush()
-                        db.session.add(Student(school_id=sid, user_id=new_user.id, class_id=class_ids[0], admission_no=request.form["admission_no"].strip().upper(
-                        ), guardian_name=request.form.get("guardian_name", ""), guardian_phone=request.form.get("guardian_phone", ""), guardian_email=request.form.get("guardian_email", "")))
+                        guardian_name = request.form.get("guardian_name", "").strip()
+                        guardian_email = request.form.get("guardian_email", "").strip().lower()
+                        guardian_phone = request.form.get("guardian_phone", "").strip()
+                        student_record = Student(school_id=sid, user_id=new_user.id, class_id=admission_class.id, admission_no=request.form["admission_no"].strip().upper(
+                        ), guardian_name=guardian_name, guardian_phone=guardian_phone, guardian_email=guardian_email)
+                        db.session.add(student_record)
+                        db.session.flush()
+                        if guardian_name:
+                            parent_username = request.form.get("parent_username", "").strip().lower()
+                            parent = User.query.filter(
+                                User.school_id == sid, User.role == "parent",
+                                or_(User.email == guardian_email, User.phone == guardian_phone)
+                            ).first() if (guardian_email or guardian_phone) else None
+                            if not parent:
+                                if not parent_username:
+                                    raise ValueError("A parent username is required when guardian details are provided.")
+                                parent_password = request.form.get("parent_password") or generate_temporary_password()
+                                parent = User(school_id=sid, role="parent", full_name=guardian_name,
+                                              username=parent_username, password_hash=generate_password_hash(parent_password),
+                                              email=guardian_email, phone=guardian_phone, must_change_password=True)
+                                db.session.add(parent)
+                                db.session.flush()
+                            db.session.add(ParentStudent(school_id=sid, parent_id=parent.id,
+                                           student_id=student_record.id, relationship="Guardian"))
                         db.session.commit()
                         create_login_slip(new_user, password)
                         return redirect(url_for("login_slip"))
@@ -1454,7 +1636,7 @@ def register_routes(app: Flask) -> None:
         students = students_query.order_by(User.full_name).all()
         classes = ClassRoom.query.filter_by(
             school_id=sid).order_by(ClassRoom.name).all()
-        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>{{ 'My Students' if user.role == 'teacher' else 'Students' }}</h2>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% if user.role == 'teacher' %}<form method="post" class="grid cols-3">{{ csrf() }}{{ field('Full Name','full_name') }}{{ field('Admission No','admission_no') }}{{ field('Username','username') }}{{ field('Temporary Password','password','password', placeholder='Leave blank to auto-generate') }}{{ field('Guardian Name','guardian_name') }}{{ field('Guardian Phone','guardian_phone') }}<button class="btn green">Add Student To My Class</button></form>{% endif %}</article><article class="card"><table><tr><th>Name</th><th>Username</th><th>Admission No</th><th>Class</th><th>Guardian</th><th>Action</th></tr>{% for st, u, c in students %}<tr><td>{{ u.full_name }}</td><td>{{ u.username }}</td><td>{{ st.admission_no }}</td><td>{{ c.name if c else '-' }}</td><td>{{ st.guardian_name }} {{ st.guardian_phone }}</td><td>{% if user.role == 'school_admin' %}<div class="actions"><form method="post">{{ csrf() }}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn ghost">Reset Password</button></form><form method="post" onsubmit="return confirm('Delete this student?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn red">Delete</button></form></div>{% endif %}</td></tr>{% endfor %}</table></article></section></div></main>""", title="Students", students=students, classes=classes)
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>{{ 'My Students' if user.role == 'teacher' else 'Students & Admissions' }}</h2>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}{{ field('Full Name','full_name',required=true) }}{{ field('Admission No','admission_no',required=true) }}{{ field('Username','username',required=true) }}{{ field('Temporary Password','password','password', placeholder='Leave blank to auto-generate') }}{% if user.role != 'teacher' %}<label>Class<select name="class_id" required>{% for class_group in classes %}<option value="{{ class_group.id }}">{{ class_group.name }}</option>{% endfor %}</select></label>{% endif %}{{ field('Guardian / Parent Name','guardian_name',required=true) }}{{ field('Guardian Phone','guardian_phone') }}{{ field('Guardian Email','guardian_email','email') }}{{ field('Parent Login Username','parent_username',placeholder='Required for a new parent') }}{{ field('Parent Temporary Password','parent_password','password',placeholder='Leave blank to auto-generate') }}<button class="btn green">Add Student & Link Parent</button></form></article><article class="card"><table><tr><th>Name</th><th>Username</th><th>Admission No</th><th>Class</th><th>Guardian</th><th>Action</th></tr>{% for st, u, c in students %}<tr><td>{{ u.full_name }}</td><td>{{ u.username }}</td><td>{{ st.admission_no }}</td><td>{{ c.name if c else '-' }}</td><td>{{ st.guardian_name }} {{ st.guardian_phone }}</td><td>{% if user.role == 'school_admin' %}<div class="actions"><form method="post">{{ csrf() }}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn ghost">Reset Password</button></form><form method="post" onsubmit="return confirm('Delete this student?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="student_id" value="{{ st.id }}"><button class="btn red">Delete</button></form></div>{% endif %}</td></tr>{% endfor %}</table></article></section></div></main>""", title="Students", students=students, classes=classes)
 
     @app.route("/promotions", methods=["GET", "POST"])
     @login_required("school_admin", "teacher")
@@ -2054,13 +2236,157 @@ def register_routes(app: Flask) -> None:
                                       term=school.term, academic_year=school.academic_year).first()
             average = round(sum(score.class_score + score.exam_score for score,
                             _ in score_rows) / len(score_rows), 1) if score_rows else 0
+            paid = bool(report_payment_for(user.id, student.id, school))
             children.append({"link": link, "student": student, "user": child_user, "class_group": class_group,
-                            "scores": score_rows, "attendance": attendance, "fee": fee, "average": average})
+                            "scores": score_rows if paid else [], "attendance": attendance, "fee": fee,
+                            "average": average if paid else 0, "report_paid": paid})
         notices = Announcement.query.filter(Announcement.school_id == user.school_id, Announcement.audience.in_(
             ["all", "parent"])).order_by(Announcement.created_at.desc()).limit(6).all()
         events = SchoolEvent.query.filter(SchoolEvent.school_id == user.school_id, SchoolEvent.audience.in_(
             ["all", "parent"]), SchoolEvent.event_date >= datetime.utcnow().date()).order_by(SchoolEvent.event_date).limit(6).all()
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card dashboard-hero"><span class="dashboard-kicker">Parent Portal</span><h2>Welcome, {{ user.full_name }}</h2><p class="muted">Secure access to your linked children's school information.</p></article>{% for child in children %}<article class="card"><div class="table-head"><div><h2>{{ child.user.full_name }}</h2><p class="muted">{{ child.student.admission_no }} · {{ child.class_group.name if child.class_group else 'No class' }} · {{ child.link.relationship }}</p></div><span class="status-pill">{{ 'Report unlocked' if child.report_paid else 'Report locked' }}</span></div><div class="grid cols-3"><div><b>Attendance</b><p>{{ child.attendance.present_days if child.attendance else 0 }} / {{ child.attendance.total_days if child.attendance else 0 }} days</p></div><div><b>Fee balance</b><p>GHS {{ '%.2f'|format((child.fee.amount_due-child.fee.amount_paid) if child.fee else 0) }}</p></div><div><b>Current period</b><p>{{ school.academic_year }} · {{ school.term }}</p></div></div>{% if child.report_paid %}<a class="btn" href="{{ url_for('parent_report',student_id=child.student.id) }}">View report card</a>{% else %}<p class="muted">Pay the report access fee for this child and current term to view or print the report.</p><a class="btn green" href="{{ url_for('parent_report_payment',student_id=child.student.id) }}">Pay to unlock report</a>{% endif %}</article>{% else %}<article class="card empty-state"><b>No children linked</b><span>Ask the school administrator to link your account to your child.</span></article>{% endfor %}<div class="grid cols-2"><article class="card"><h2>Announcements</h2>{% for item in notices %}<p><b>{{ item.title }}</b><br><span class="muted">{{ item.body }}</span></p>{% else %}<p>No announcements.</p>{% endfor %}</article><article class="card"><h2>Upcoming events</h2>{% for item in events %}<p><b>{{ item.title }}</b><br><span class="muted">{{ fmt_dt(item.event_date,'%d %B %Y') }}</span></p>{% else %}<p>No upcoming events.</p>{% endfor %}</article></div></section></div></main>""", title="Parent Portal", children=children, notices=notices, events=events)
         return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card dashboard-hero"><span class="dashboard-kicker">Parent Portal</span><h2>Welcome, {{ user.full_name }}</h2><p class="muted">A secure, read-only view of the children linked to your account.</p></article>{% for child in children %}<article class="card"><div class="table-head"><div><h2>{{ child.user.full_name }}</h2><p class="muted">{{ child.student.admission_no }} · {{ child.class_group.name if child.class_group else 'No class' }} · {{ child.link.relationship }}</p></div><span class="badge">Average {{ child.average }}%</span></div><div class="grid cols-3"><div><b>Attendance</b><p>{{ child.attendance.present_days if child.attendance else 0 }} / {{ child.attendance.total_days if child.attendance else 0 }} days</p></div><div><b>Fee balance</b><p>GH₵ {{ '%.2f'|format((child.fee.amount_due-child.fee.amount_paid) if child.fee else 0) }}</p></div><div><b>Current period</b><p>{{ school.academic_year }} · {{ school.term }}</p></div></div><table><tr><th>Subject</th><th>Class</th><th>Exam</th><th>Total</th><th>Grade</th></tr>{% for score, subject in child.scores %}<tr><td>{{ subject.name }}</td><td>{{ score.class_score }}</td><td>{{ score.exam_score }}</td><td>{{ score.class_score + score.exam_score }}</td><td>{{ grade(score.class_score + score.exam_score) }}</td></tr>{% else %}<tr><td colspan="5"><div class="empty-state"><b>No published results</b><span>Results for this period will appear here.</span></div></td></tr>{% endfor %}</table></article>{% else %}<article class="card empty-state"><b>No children linked</b><span>Ask the school administrator to link your parent account to your child.</span></article>{% endfor %}<div class="grid cols-2"><article class="card"><h2>Announcements</h2>{% for item in notices %}<p><b>{{ item.title }}</b><br><span class="muted">{{ item.body }}</span></p>{% else %}<div class="empty-state"><b>No announcements</b></div>{% endfor %}</article><article class="card"><h2>Upcoming events</h2>{% for item in events %}<p><b>{{ item.title }}</b><br><span class="muted">{{ fmt_dt(item.event_date, '%d %B %Y') }}</span></p>{% else %}<div class="empty-state"><b>No upcoming events</b></div>{% endfor %}</article></div></section></div></main>""", title="Parent Portal", children=children, notices=notices, events=events)
+
+    def linked_parent_student(parent: User, student_id: int):
+        return db.session.query(Student, User).join(
+            User, Student.user_id == User.id
+        ).join(
+            ParentStudent, ParentStudent.student_id == Student.id
+        ).filter(
+            ParentStudent.parent_id == parent.id,
+            ParentStudent.school_id == parent.school_id,
+            Student.id == student_id,
+            Student.school_id == parent.school_id,
+        ).first()
+
+    @app.route("/parent/report/<int:student_id>")
+    @login_required("parent")
+    @school_required
+    def parent_report(student_id):
+        parent = current_user()
+        school = current_school()
+        linked = linked_parent_student(parent, student_id)
+        if not linked:
+            abort(404)
+        if not report_payment_for(parent.id, student_id, school):
+            return redirect(url_for("parent_report_payment", student_id=student_id))
+        student, child_user = linked
+        log_action("view_paid_parent_report",
+                   f"Viewed {student.admission_no} for {school.term} {school.academic_year}")
+        db.session.commit()
+        return render(REPORT_CARD_PAGE, title="Academic Report Card",
+                      **build_report_context(student, school, child_user))
+
+    @app.route("/parent/report/<int:student_id>/payment")
+    @login_required("parent")
+    @school_required
+    def parent_report_payment(student_id):
+        parent = current_user()
+        school = current_school()
+        linked = linked_parent_student(parent, student_id)
+        if not linked:
+            abort(404)
+        if report_payment_for(parent.id, student_id, school):
+            return redirect(url_for("parent_report", student_id=student_id))
+        student, child_user = linked
+        fee = Decimal(report_fee_subunit()) / 100
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card" style="max-width:620px"><span class="dashboard-kicker dark">Secure report access</span><h2>Unlock {{ child.full_name }}'s report card</h2><p class="muted">{{ school.academic_year }} · {{ school.term }}</p><div class="kpi-card"><div class="kpi-icon">◈</div><div><span>Amount due</span><strong>{{ currency }} {{ '%.2f'|format(fee) }}</strong><small>One payment unlocks this child's current-term report.</small></div></div>{% for category,message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" action="{{ url_for('initialize_parent_report_payment',student_id=student.id) }}">{{ csrf() }}<button class="btn green" type="submit">Pay Now with Paystack</button></form><p class="muted">Payment is verified securely on the server. Your card or MoMo details are handled by Paystack and are never stored here.</p></article></section></div></main>""", title="Report Payment", student=student, child=child_user, fee=float(fee), currency=Config.PAYSTACK_CURRENCY)
+
+    @app.route("/parent/report/<int:student_id>/paystack", methods=["POST"])
+    @login_required("parent")
+    @school_required
+    def initialize_parent_report_payment(student_id):
+        parent = current_user()
+        school = current_school()
+        linked = linked_parent_student(parent, student_id)
+        if not linked:
+            abort(404)
+        if report_payment_for(parent.id, student_id, school):
+            return redirect(url_for("parent_report", student_id=student_id))
+        if not parent.email:
+            flash("A parent email address is required for Paystack. Ask the school administrator to add it.", "error")
+            return redirect(url_for("parent_report_payment", student_id=student_id))
+        amount = report_fee_subunit()
+        reference = f"RPT-{school.id}-{parent.id}-{student_id}-{uuid4().hex}"
+        payment = ParentReportPayment(
+            school_id=school.id, parent_id=parent.id, student_id=student_id,
+            academic_year=school.academic_year, term=school.term,
+            reference=reference, amount_subunit=amount,
+            currency=Config.PAYSTACK_CURRENCY, status="pending")
+        db.session.add(payment)
+        db.session.commit()
+        try:
+            result = paystack_request("/transaction/initialize", "POST", {
+                "email": parent.email,
+                "amount": str(amount),
+                "currency": Config.PAYSTACK_CURRENCY,
+                "reference": reference,
+                "callback_url": url_for("paystack_callback", _external=True),
+                "channels": ["mobile_money", "card"],
+                "metadata": {
+                    "payment_id": payment.id, "school_id": school.id,
+                    "parent_id": parent.id, "student_id": student_id,
+                    "academic_year": school.academic_year, "term": school.term,
+                },
+            })
+            authorization_url = (result.get("data") or {}).get("authorization_url", "")
+            parsed = urlparse(authorization_url)
+            if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith("paystack.com"):
+                raise RuntimeError("Paystack returned an invalid checkout address")
+            payment.authorization_url = authorization_url
+            payment.updated_at = datetime.utcnow()
+            db.session.commit()
+            return redirect(authorization_url)
+        except RuntimeError:
+            payment.status = "failed"
+            payment.updated_at = datetime.utcnow()
+            db.session.commit()
+            flash("Payment could not be started. Please try again shortly.", "error")
+            return redirect(url_for("parent_report_payment", student_id=student_id))
+
+    @app.route("/payments/paystack/callback")
+    def paystack_callback():
+        reference = request.args.get("reference", "").strip()
+        payment = ParentReportPayment.query.filter_by(reference=reference).first()
+        if not payment:
+            abort(404)
+        try:
+            verified = verify_report_payment(payment)
+        except RuntimeError:
+            verified = False
+        user = current_user()
+        if verified and user and user.role == "parent" and user.id == payment.parent_id:
+            flash("Payment verified. The report card is now unlocked.", "success")
+            return redirect(url_for("parent_report", student_id=payment.student_id))
+        if verified:
+            flash("Payment verified. Sign in to view the report card.", "success")
+            return redirect(url_for("login", portal="parent"))
+        flash("Payment was not completed or could not be verified.", "error")
+        return redirect(url_for("parent_report_payment", student_id=payment.student_id)) if user else redirect(url_for("login", portal="parent"))
+
+    @app.route("/payments/paystack/webhook", methods=["POST"])
+    def paystack_webhook():
+        secret = Config.PAYSTACK_SECRET_KEY
+        if not secret:
+            return Response(status=503)
+        raw_body = request.get_data(cache=False)
+        expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha512).hexdigest()
+        supplied = request.headers.get("x-paystack-signature", "")
+        if not hmac.compare_digest(expected, supplied):
+            return Response(status=401)
+        try:
+            event_data = json.loads(raw_body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return Response(status=400)
+        if event_data.get("event") == "charge.success":
+            reference = str((event_data.get("data") or {}).get("reference") or "")
+            payment = ParentReportPayment.query.filter_by(reference=reference).first()
+            if payment and payment.status != "success":
+                try:
+                    verify_report_payment(payment)
+                except RuntimeError:
+                    return Response(status=503)
+        return Response(status=200)
 
     @app.route("/my-results.pdf")
     @login_required("student")
@@ -2132,6 +2458,10 @@ def register_routes(app: Flask) -> None:
         user = current_user()
         school = current_school()
         student = Student.query.filter_by(user_id=user.id).first()
+        if not student:
+            abort(404)
+        return render(REPORT_CARD_PAGE, title="Academic Report Card",
+                      **build_report_context(student, school, user))
         rows = db.session.query(Score, Subject).join(Subject, Score.subject_id == Subject.id).filter(
             Score.student_id == student.id).order_by(Subject.name).all() if student else []
         attendance = period_record(

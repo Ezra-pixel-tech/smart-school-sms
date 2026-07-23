@@ -25,3 +25,11 @@ services:
         value: "5"
       - key: LOGIN_RATE_LIMIT_WINDOW_SECONDS
         value: "900"
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: PARENT_REPORT_FEE
+        value: "10.00"
+      - key: PAYSTACK_CURRENCY
+        value: "GHS"
