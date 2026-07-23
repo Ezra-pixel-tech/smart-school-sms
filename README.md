@@ -119,7 +119,7 @@ The school computer should stay on while teachers and students are using the sys
 
 - Students pay the configured `STUDENT_REPORT_FEE` (default GH₵10) for the current academic year and term before report HTML/PDF access. Paystack is verified server-side; configure the Paystack webhook as `APP_URL/payments/paystack/unified-webhook` so both parent and student payments are handled.
 - School administrators can open **Students → Import Students or Teachers**, upload CSV or XLSX, review validation errors, choose **skip** or **update** for duplicates, commit valid rows, and view the saved import report.
-- Administrator password resets use Resend. Verify the sender domain in Resend, set `RESEND_API_KEY`, `EMAIL_FROM`, and the public HTTPS `APP_URL`. Reset links expire after `PASSWORD_RESET_EXPIRY_MINUTES` and are single-use.
+- Administrator password resets use Resend. Verify the sender domain in Resend, set `RESEND_API_KEY`, `EMAIL_FROM`, and the public HTTPS `APP_URL`. Reset links expire after `PASSWORD_RESET_EXPIRY_MINUTES` and are single-use. `EMAIL_FROM` must be a sender on the exact verified domain, for example `Smart Schools SMS <reset@mail.yourschool.com>`. The testing sender `onboarding@resend.dev` can only send to the email address that owns the Resend account and returns HTTP 403 for other administrators.
 
 Never commit real Paystack or Resend keys. Add them only in the host environment. New database tables are created safely at application startup by SQLAlchemy: `student_report_payments`, `password_reset_tokens`, and `bulk_import_jobs`.
 
