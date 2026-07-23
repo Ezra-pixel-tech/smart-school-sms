@@ -33,3 +33,13 @@ services:
         value: "10.00"
       - key: PAYSTACK_CURRENCY
         value: "GHS"
+      - key: STUDENT_REPORT_FEE
+        value: "10.00"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: PASSWORD_RESET_EXPIRY_MINUTES
+        value: "60"
