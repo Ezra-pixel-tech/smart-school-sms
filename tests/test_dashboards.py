@@ -83,6 +83,10 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Better Future", html)
         self.assertIn("Student Management", html)
         self.assertIn("product-window", html)
+        self.assertIn("About Us", html)
+        self.assertIn("Get Started", html)
+        for damaged_character in ("â", "Â", "ï¼"):
+            self.assertNotIn(damaged_character, html)
 
     def test_school_admin_dashboard_exposes_import_and_export(self):
         client = run.app.test_client()
@@ -223,4 +227,3 @@ class DashboardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
