@@ -1206,19 +1206,34 @@ STUDENT_DASHBOARD_PAGE = """
 """
 
 REPORT_CARD_PAGE = """
-<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="report-sheet">
-<style>.attendance-line{border:1px solid #444;border-radius:8px;padding:10px;text-align:center}@media print{@page{size:A4;margin:5mm}.report-sheet{zoom:.78;break-inside:avoid;padding:0!important;border:0!important}.report-sheet th,.report-sheet td{padding:2px!important;font-size:7px!important}.report-brand{padding:6px!important}.report-brand img{width:50px!important;height:50px!important}.student-report-meta{padding:3px!important}.student-report-meta p,.next-term{margin:2px!important}.print-chart{margin:4px 0!important;padding:4px!important}.report-bars{gap:2px!important}.report-bar-row>div{height:6px!important}.report-two-col,.remarks-lines,.signature-promotion{margin-top:4px!important}.remarks-lines p{min-height:12px!important;margin:2px!important}.signature-promotion{margin:4px 0!important;padding:4px!important}.signature-promotion img{max-height:24px!important}}</style>
+<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="card report-card terminal terminal-reference">
+<style>
+.terminal-reference{max-width:900px;margin:auto;padding:38px 42px!important;border-top:0!important}
+.terminal-reference .report-actions{display:flex;justify-content:flex-end;gap:10px;margin-bottom:20px}
+.terminal-reference .report-top{grid-template-columns:80px 1fr 80px;border-bottom:3px solid #d49a16;padding-bottom:18px}
+.terminal-reference .report-top h1{font-size:19px;margin:0;text-transform:uppercase}
+.terminal-reference .report-top p{font-size:13px;line-height:1.35}
+.terminal-reference .terminal-title{background:none!important;color:#999!important;font-size:16px;padding:8px 0 0}
+.terminal-reference .terminal-student{font-size:16px;margin:13px 0}
+.terminal-reference .terminal-meta{font-size:11px;line-height:1.5;margin:12px 0 8px}
+.terminal-reference table{width:100%;table-layout:fixed}
+.terminal-reference th,.terminal-reference td{padding:5px 6px!important;font-size:9px!important}
+.terminal-reference th{background:#fff!important;color:#888!important}
+.terminal-reference .subjects th:nth-child(1){width:21%}.terminal-reference .subjects th:nth-child(2),.terminal-reference .subjects th:nth-child(3),.terminal-reference .subjects th:nth-child(4){width:13%}.terminal-reference .subjects th:nth-child(5){width:9%}.terminal-reference .subjects th:nth-child(6){width:17%}.terminal-reference .subjects th:nth-child(7){width:14%}
+.terminal-reference .remarks{margin-top:18px}.terminal-reference .remarks td:first-child{width:36%;font-weight:800}
+.terminal-reference .signature-block{margin-top:24px}.terminal-reference .signature-block h3{font-size:15px;margin:0 0 6px}.terminal-reference .signature-block img{max-width:150px;max-height:55px;display:block;object-fit:contain}.terminal-reference .signature-line{width:240px;height:45px}
+.terminal-reference .grading-key{margin-top:28px}.terminal-reference .grading-key th,.terminal-reference .grading-key td{padding:4px 2px!important;text-align:center}.terminal-reference .powered{margin-top:18px}
+@media print{@page{size:A4;margin:10mm}.terminal-reference{width:100%;max-width:none;padding:0!important;border:0!important;box-shadow:none!important}.terminal-reference .report-actions{display:none!important}.terminal-reference th,.terminal-reference td{font-size:8px!important}.side,.topbar{display:none!important}.layout{display:block!important}}
+</style>
 <div class="report-actions no-print"><button class="btn" onclick="window.print()">Print Report</button>{% if user.role == 'student' %}<a class="btn ghost" href="{{ url_for('student_results_pdf') }}">Download PDF</a>{% endif %}</div>
-<header class="academic-report-head"><div class="report-brand">{% if school.crest %}<img src="{{ url_for('uploads',filename=school.crest) }}" alt="{{ school.name }} crest">{% endif %}<div><h1>{{ school.name }}</h1><p>ACADEMIC REPORT CARD</p></div></div><div class="school-contact"><b>School Address:</b> {{ school.address or '-' }}<br><b>Phone:</b> {{ school.phone or '-' }}<br><b>Email:</b> {{ school.email or '-' }}</div></header>
-<div class="student-report-meta"><div><p><b>NAME:</b> {{ report_user.full_name }}</p><p><b>CLASS:</b> {{ student_class.name if student_class else '-' }}</p><p><b>ADMISSION NO:</b> {{ student.admission_no }}</p></div><div><p><b>NO. ON ROLL:</b> {{ detail.number_on_roll if detail else 0 }}</p><p><b>TERM:</b> {{ school.term }}</p><p><b>YEAR:</b> {{ school.academic_year }}</p></div></div>
-<p class="next-term"><b>NEXT TERM BEGINNING:</b> {{ fmt_dt(detail.next_term_begins,'%d %B %Y') if detail and detail.next_term_begins else '-' }}</p>
-<table class="report-subjects"><thead><tr><th>SUBJECT</th><th>CA<br>30%</th><th>EXAM<br>70%</th><th>TOTAL<br>100%</th><th>GRADE</th><th>REMARKS</th></tr></thead><tbody>{% for score,subject in rows %}{% set subject_total=score.class_score+score.exam_score %}<tr><td>{{ subject.name }}</td><td>{{ score.class_score }}</td><td>{{ score.exam_score }}</td><td>{{ subject_total }}</td><td>{{ grade(subject_total) }}</td><td>{{ score.remarks or grade_info(subject_total).interpretation }}</td></tr>{% else %}<tr><td colspan="6">No subject results entered.</td></tr>{% endfor %}<tr class="report-total"><td>TOTAL / AVERAGE</td><td colspan="2"></td><td>{{ report_total }} / {{ average }}%</td><td>{{ overall.grade }}</td><td>{{ overall.interpretation }}</td></tr></tbody></table>
-<section class="print-chart"><h2>SUBJECT PERFORMANCE GRAPH</h2><div class="report-bars">{% for score,subject in rows %}<div class="report-bar-row"><span>{{ subject.name }}</span><div><i style="width:{{ [score.class_score+score.exam_score,100]|min }}%"></i></div><b>{{ score.class_score+score.exam_score }}%</b></div>{% endfor %}</div></section>
-<table class="report-summary"><tr><th colspan="7">SUMMARY</th></tr><tr><th>DETAIL</th><th>1ST TERM</th><th>2ND TERM</th><th>3RD TERM</th><th>TOTAL</th><th>AVERAGE</th><th>POSITION</th></tr><tr><td>TOTAL MARKS OBTAINED</td>{% for item in term_summary %}<td>{{ item.total }}</td>{% endfor %}<td>{{ yearly_total }}</td><td>{{ yearly_average }}</td><td>{{ position or '-' }}</td></tr><tr><td>PERCENTAGE (%)</td>{% for item in term_summary %}<td>{{ item.average }}</td>{% endfor %}<td colspan="3"></td></tr></table>
-<div class="report-two-col"><div><h3>ATTENDANCE</h3><p class="attendance-line"><b>Days Present:</b> {{ attendance.present_days if attendance else 0 }} &nbsp; out of &nbsp; <b>Overall School Days:</b> {{ attendance.total_days if attendance else 0 }}</p></div><div><h3>KEY TO GRADES</h3><table><tr><th>GRADE</th><th>RANGE</th><th>REMARKS</th></tr><tr><td>A1</td><td>80-100</td><td>Excellent</td></tr><tr><td>B2/B3</td><td>65-79</td><td>Good</td></tr><tr><td>C4-C6</td><td>50-64</td><td>Credit</td></tr><tr><td>D7/E8</td><td>40-49</td><td>Pass</td></tr><tr><td>F9</td><td>0-39</td><td>Fail</td></tr></table></div></div>
-<div class="remarks-lines"><p><b>CLASS TEACHER'S REMARKS:</b> {{ detail.class_teacher_remarks if detail else overall.interpretation }}</p><p><b>HEAD TEACHER'S REMARKS:</b> {{ detail.head_teacher_remarks if detail else '' }}</p><p><b>INTEREST:</b> {{ detail.interest if detail else '' }} &nbsp; <b>ATTITUDE:</b> {{ detail.attitude if detail else '' }} &nbsp; <b>CONDUCT:</b> {{ conduct or 'Good' }}</p></div>
-<div class="signature-promotion"><div><b>{{ school.head_title or 'Head Teacher' }}</b>{% if school.head_signature %}<img src="{{ url_for('uploads',filename=school.head_signature) }}" alt="Head signature">{% endif %}<span>{{ school.head_name }}</span></div><div><b>PROMOTED TO</b><strong>{{ student_class.name if student.promotion_note else '—' }}</strong><span>{{ student.promotion_note or 'Not promoted' }}</span></div></div>
-<div class="report-two-col fees-sign"><div><h3>FEES</h3><p><b>Current balance:</b> GHS {{ ((fees.amount_due-fees.amount_paid) if fees else fee_breakdown_total) }}</p></div><div><b>Date:</b> {{ now.strftime('%d / %m / %Y') }}</div></div>
+<div class="report-top">{% if school.crest %}<img src="{{ url_for('uploads',filename=school.crest) }}" alt="{{ school.name }} crest">{% else %}<span></span>{% endif %}<div><h1>{{ school.name }}</h1><p>{{ school.address or '-' }}</p><p>{{ school.phone or '-' }}</p><p>{{ school.email or '-' }}</p><p>{{ school.motto or '' }}</p><div class="terminal-title">Terminal Report</div></div><span></span></div>
+<div class="terminal-student">&lt;&lt;{{ report_user.full_name|upper }}&gt;&gt;</div>
+<div class="terminal-meta"><span><b>CLASS:</b> {{ student_class.name if student_class else '-' }}</span><span><b>ACADEMIC YEAR:</b> {{ school.academic_year or '-' }}</span><span><b>POSITION IN CLASS:</b> {{ position or '-' }}</span><span><b>ACADEMIC TERM:</b> {{ school.term or '-' }}</span><span><b>NEXT TERM RE-OPENS:</b> {{ fmt_dt(detail.next_term_begins,'%d %B %Y') if detail and detail.next_term_begins else '-' }}</span><span><b>NUMBER ON ROLL:</b> {{ detail.number_on_roll if detail and detail.number_on_roll else '-' }}</span></div>
+<table class="subjects"><thead><tr><th>Subjects</th><th>Class Score<br>(30%)</th><th>Exam Score<br>(70%)</th><th>Total Score<br>(100%)</th><th>Grade</th><th>Grade Meaning</th><th>Teacher</th></tr></thead><tbody>{% for score,subject in rows %}{% set subject_total=score.class_score+score.exam_score %}{% set info=grade_info(subject_total) %}<tr><td>{{ subject.name }}</td><td>{{ score.class_score }}</td><td>{{ score.exam_score }}</td><td>{{ subject_total }}</td><td>{{ info.grade }}</td><td>{{ info.interpretation }}</td><td>{{ score.remarks or info.interpretation }}</td></tr>{% else %}<tr><td colspan="7">No results have been entered yet.</td></tr>{% endfor %}</tbody></table>
+<table class="remarks"><tr><td>INTEREST</td><td>{{ detail.interest if detail else '' }}</td></tr><tr><td>CONDUCT</td><td>{{ conduct or 'Good' }}</td></tr><tr><td>PROMOTION STATUS</td><td>{{ student.promotion_note or 'Not promoted' }}</td></tr><tr><td>ATTITUDE</td><td>{{ detail.attitude if detail else '' }}</td></tr><tr><td>CLASS TEACHER'S REMARK</td><td>{{ detail.class_teacher_remarks if detail and detail.class_teacher_remarks else overall.interpretation }}</td></tr><tr><td>ACADEMIC REMARK</td><td>Average: {{ average }}% | Attendance: {{ attendance.present_days if attendance else 0 }}/{{ attendance.total_days if attendance else 0 }} | Fee Balance: GH₵ {{ '%.2f'|format((fees.amount_due-fees.amount_paid) if fees else fee_breakdown_total) }}</td></tr></table>
+<div class="signature-block"><h3>{{ (school.head_title or 'Headteacher')|upper }}'S SIGNATURE</h3>{% if school.head_signature %}<img src="{{ url_for('uploads',filename=school.head_signature) }}" alt="Headteacher signature">{% else %}<div class="signature-line"></div>{% endif %}</div>
+<table class="grading-key"><tr><th>80 - 100</th><th>70 - 79</th><th>65 - 69</th><th>60 - 64</th><th>55 - 59</th><th>50 - 54</th><th>45 - 49</th><th>40 - 44</th><th>0 - 39</th></tr><tr><td>A1</td><td>B2</td><td>B3</td><td>C4</td><td>C5</td><td>C6</td><td>D7</td><td>E8</td><td>F9</td></tr><tr><td>Excellent</td><td>Very Good</td><td>Good</td><td>Credit</td><td>Credit</td><td>Credit</td><td>Pass</td><td>Pass</td><td>Fail</td></tr></table>
+<p class="powered">Powered by Smart School SMS</p>
 </section></div></main>
 """
 
@@ -2490,62 +2505,151 @@ def register_routes(app: Flask) -> None:
     def student_results_pdf():
         user = current_user()
         school = current_school()
-        student = Student.query.filter_by(user_id=user.id).first()
+        student = Student.query.filter_by(
+            user_id=user.id, school_id=school.id).first()
         if not student:
             abort(404)
         if not app.student_report_is_paid(student, school, user):
             return redirect(url_for("student_report_payment"))
-        student_class = db.session.get(
-            ClassRoom, student.class_id) if student and student.class_id else None
-        rows = db.session.query(Score, Subject).join(Subject, Score.subject_id == Subject.id).filter(
-            Score.student_id == student.id).order_by(Subject.name).all() if student else []
+        report = build_report_context(student, school, user)
         buffer = BytesIO()
         from reportlab.lib.pagesizes import A4
-        from reportlab.pdfgen import canvas
-        pdf = canvas.Canvas(buffer, pagesize=A4)
-        y = A4[1] - 55
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+        document = SimpleDocTemplate(
+            buffer, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm,
+            topMargin=12 * mm, bottomMargin=12 * mm,
+        )
+        styles = getSampleStyleSheet()
+        center = ParagraphStyle(
+            "ReportCenter", parent=styles["Normal"], alignment=TA_CENTER,
+            fontSize=9, leading=11,
+        )
+        title_style = ParagraphStyle(
+            "ReportTitle", parent=center, fontName="Helvetica-Bold",
+            fontSize=14, leading=16,
+        )
+        small = ParagraphStyle(
+            "ReportSmall", parent=styles["Normal"], fontSize=7, leading=9,
+        )
+        story = []
+        crest = ""
         if school.crest and (UPLOAD_DIR / school.crest).exists():
-            pdf.drawImage(str(UPLOAD_DIR / school.crest), 45, y - 30,
-                          width=55, height=55, preserveAspectRatio=True, mask="auto")
-        pdf.setFont("Helvetica-Bold", 16)
-        pdf.drawString(115 if school.crest else 45, y, school.name)
-        y -= 24
-        pdf.setFont("Helvetica", 11)
-        pdf.drawString(45, y, f"Terminal Report Card - {user.full_name}")
-        y -= 20
-        pdf.drawString(
-            45, y, f"Admission No: {student.admission_no if student else '-'}   Class: {student_class.name if student_class else '-'}")
-        y -= 18
-        pdf.drawString(
-            45, y, f"Term: {school.term}   Academic Year: {school.academic_year}")
-        y -= 34
-        pdf.setFont("Helvetica-Bold", 10)
-        for x, label in [(45, "Subject"), (215, "Class"), (280, "Exam"), (345, "Total"), (410, "Grade")]:
-            pdf.drawString(x, y, label)
-        y -= 18
-        pdf.setFont("Helvetica", 10)
-        for sc, sub in rows:
-            total = sc.class_score + sc.exam_score
-            if y < 70:
-                pdf.showPage()
-                y = A4[1] - 55
-            pdf.drawString(45, y, sub.name[:28])
-            pdf.drawString(215, y, str(sc.class_score))
-            pdf.drawString(280, y, str(sc.exam_score))
-            pdf.drawString(345, y, str(total))
-            pdf.drawString(410, y, grade(total))
-            y -= 17
-        y -= 18
-        pdf.setFont("Helvetica-Bold", 10)
-        pdf.drawString(
-            45, y, f"Promotion: {student.promotion_note or 'Not promoted'}")
-        y -= 45
+            crest = Image(str(UPLOAD_DIR / school.crest), width=18 * mm, height=18 * mm)
+        heading = Paragraph(
+            f"<b>{school.name.upper()}</b><br/>{school.address or '-'}<br/>"
+            f"{school.phone or '-'}<br/>{school.email or '-'}<br/>{school.motto or ''}"
+            "<br/><br/><font color='#999999'><b>TERMINAL REPORT</b></font>",
+            title_style,
+        )
+        header = Table([[crest, heading, ""]], colWidths=[24 * mm, 116 * mm, 24 * mm])
+        header.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LINEBELOW", (0, 0), (-1, -1), 1.5, colors.HexColor("#D49A16")),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        story.extend([header, Spacer(1, 4 * mm)])
+        story.append(Paragraph(f"<b>&lt;&lt;{user.full_name.upper()}&gt;&gt;</b>", center))
+        student_class = report["student_class"]
+        detail = report["detail"]
+        meta = Table([
+            [f"CLASS: {student_class.name if student_class else '-'}",
+             f"ACADEMIC YEAR: {school.academic_year or '-'}"],
+            [f"POSITION IN CLASS: {report['position'] or '-'}",
+             f"ACADEMIC TERM: {school.term or '-'}"],
+            [f"NEXT TERM RE-OPENS: {detail.next_term_begins.strftime('%d %B %Y') if detail and detail.next_term_begins else '-'}",
+             f"NUMBER ON ROLL: {detail.number_on_roll if detail and detail.number_on_roll else '-'}"],
+        ], colWidths=[82 * mm, 82 * mm])
+        meta.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("LEADING", (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        story.extend([meta, Spacer(1, 2 * mm)])
+
+        subject_data = [[
+            "SUBJECTS", "CLASS SCORE\n(30%)", "EXAM SCORE\n(70%)",
+            "TOTAL SCORE\n(100%)", "GRADE", "GRADE MEANING", "TEACHER",
+        ]]
+        for score, subject in report["rows"]:
+            total = score.class_score + score.exam_score
+            info = grade_info(total)
+            subject_data.append([
+                subject.name.upper(), str(score.class_score), str(score.exam_score),
+                str(total), info["grade"], info["interpretation"],
+                score.remarks or info["interpretation"],
+            ])
+        if len(subject_data) == 1:
+            subject_data.append(["No results have been entered yet.", "", "", "", "", "", ""])
+        subjects = Table(
+            subject_data, repeatRows=1,
+            colWidths=[34 * mm, 20 * mm, 20 * mm, 21 * mm, 13 * mm, 27 * mm, 29 * mm],
+        )
+        subjects.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), .7, colors.black),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#888888")),
+            ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+            ("LEADING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.extend([subjects, Spacer(1, 4 * mm)])
+
+        attendance = report["attendance"]
+        fees = report["fees"]
+        fee_balance = (fees.amount_due - fees.amount_paid) if fees else report["fee_breakdown_total"]
+        remarks_data = [
+            ["INTEREST", detail.interest if detail else ""],
+            ["CONDUCT", report["conduct"] or "Good"],
+            ["PROMOTION STATUS", student.promotion_note or "Not promoted"],
+            ["ATTITUDE", detail.attitude if detail else ""],
+            ["CLASS TEACHER'S REMARK", detail.class_teacher_remarks if detail and detail.class_teacher_remarks else report["overall"]["interpretation"]],
+            ["ACADEMIC REMARK", f"Average: {report['average']}% | Attendance: {attendance.present_days if attendance else 0}/{attendance.total_days if attendance else 0} | Fee Balance: GHS {fee_balance:.2f}"],
+        ]
+        remarks = Table(remarks_data, colWidths=[58 * mm, 106 * mm])
+        remarks.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), .7, colors.black),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("LEADING", (0, 0), (-1, -1), 9),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.extend([remarks, Spacer(1, 5 * mm)])
+        story.append(Paragraph(
+            f"<b>{(school.head_title or 'Headteacher').upper()}'S SIGNATURE</b>", small))
         if school.head_signature and (UPLOAD_DIR / school.head_signature).exists():
-            pdf.drawImage(str(UPLOAD_DIR / school.head_signature), 45, y,
-                          width=120, height=40, preserveAspectRatio=True, mask="auto")
-        pdf.drawString(
-            45, y - 12, f"{school.head_title or 'Head Teacher'}: {school.head_name or ''}")
-        pdf.save()
+            story.append(Image(str(UPLOAD_DIR / school.head_signature),
+                               width=38 * mm, height=14 * mm))
+        else:
+            signature = Table([[""]], colWidths=[48 * mm], rowHeights=[12 * mm])
+            signature.setStyle(TableStyle([("LINEBELOW", (0, 0), (0, 0), 1, colors.black)]))
+            story.append(signature)
+        story.append(Spacer(1, 4 * mm))
+        grading = Table([
+            ["80 - 100", "70 - 79", "65 - 69", "60 - 64", "55 - 59", "50 - 54", "45 - 49", "40 - 44", "0 - 39"],
+            ["A1", "B2", "B3", "C4", "C5", "C6", "D7", "E8", "F9"],
+            ["Excellent", "Very Good", "Good", "Credit", "Credit", "Credit", "Pass", "Pass", "Fail"],
+        ], colWidths=[164 * mm / 9] * 9)
+        grading.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), .7, colors.black),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTSIZE", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        story.extend([grading, Spacer(1, 4 * mm),
+                      Paragraph("Powered by Smart School SMS", small)])
+        document.build(story)
         log_action("download_result_pdf", "Student downloaded result PDF")
         db.session.commit()
         buffer.seek(0)

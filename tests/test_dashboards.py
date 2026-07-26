@@ -146,6 +146,13 @@ class DashboardTests(unittest.TestCase):
         html = client.get("/my-results").get_data(as_text=True)
         self.assertIn("JHS 2", html)
         self.assertIn("Promoted from JHS 1 to JHS 2", html)
+        self.assertIn("TERMINAL REPORT", html)
+        self.assertIn("CLASS SCORE", html)
+        self.assertIn("HEADTEACHER", html)
+        pdf = client.get("/my-results.pdf")
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf.mimetype, "application/pdf")
+        self.assertTrue(pdf.data.startswith(b"%PDF"))
 
     def test_student_report_is_locked_without_payment(self):
         Payment = run.app.feature_models["StudentReportPayment"]
