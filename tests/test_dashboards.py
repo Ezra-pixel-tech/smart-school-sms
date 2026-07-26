@@ -4,6 +4,7 @@ import hmac
 import json
 import tempfile
 import unittest
+from io import BytesIO
 from unittest.mock import patch
 
 os.environ.setdefault("FLASK_DEBUG", "1")
@@ -12,6 +13,7 @@ os.environ["DATABASE_URL"] = "sqlite:///" + tempfile.mktemp(suffix=".db").replac
 
 import run
 from werkzeug.security import generate_password_hash
+from openpyxl import load_workbook
 
 
 class DashboardTests(unittest.TestCase):
@@ -74,6 +76,39 @@ class DashboardTests(unittest.TestCase):
         response = run.app.test_client().get("/static/smart-school-logo.png")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.mimetype, "image/png")
+
+    def test_landing_page_matches_product_direction(self):
+        html = run.app.test_client().get("/").get_data(as_text=True)
+        self.assertIn("Smarter School", html)
+        self.assertIn("Better Future", html)
+        self.assertIn("Student Management", html)
+        self.assertIn("product-window", html)
+
+    def test_school_admin_dashboard_exposes_import_and_export(self):
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = self.users["school_admin"].id
+            session["_csrf"] = "test-csrf"
+        html = client.get("/dashboard").get_data(as_text=True)
+        self.assertIn("Import Excel", html)
+        self.assertIn("Export Excel", html)
+        self.assertIn("/admin/export.xlsx", html)
+
+    def test_school_admin_export_contains_school_records(self):
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = self.users["school_admin"].id
+            session["_csrf"] = "test-csrf"
+        response = client.get("/admin/export.xlsx")
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.data), read_only=True)
+        self.assertEqual(workbook.sheetnames, ["Students", "Teachers"])
+        student_rows = list(workbook["Students"].iter_rows(values_only=True))
+        teacher_rows = list(workbook["Teachers"].iter_rows(values_only=True))
+        self.assertEqual(student_rows[0][0:4], (
+            "full_name", "username", "admission_no", "class"))
+        self.assertTrue(any(row[1] == "dashboard_student" for row in student_rows[1:]))
+        self.assertTrue(any(row[1] == "dashboard_teacher" for row in teacher_rows[1:]))
 
     def test_students_page_renders_for_admin_and_teacher(self):
         client = run.app.test_client()
@@ -188,3 +223,4 @@ class DashboardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
