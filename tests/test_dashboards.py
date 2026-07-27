@@ -70,7 +70,8 @@ class DashboardTests(unittest.TestCase):
                 else:
                     self.assertIn("Quick Actions", html)
                     self.assertIn("line-chart", html)
-                    self.assertIn("Fee Collection", html)
+                self.assertIn("theme-toggle", html)
+                self.assertIn("smart-school-theme", html)
 
     def test_logo_is_packaged(self):
         response = run.app.test_client().get("/static/smart-school-logo.png")
@@ -87,6 +88,18 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Get Started", html)
         for damaged_character in ("â", "Â", "ï¼"):
             self.assertNotIn(damaged_character, html)
+
+    def test_login_uses_reference_role_tabs_and_accessible_fields(self):
+        html = run.app.test_client().get(
+            "/login?portal=admin").get_data(as_text=True)
+        self.assertIn("auth-brand-panel", html)
+        self.assertIn("Administrator", html)
+        self.assertIn("Teacher", html)
+        self.assertIn("Parent", html)
+        self.assertIn("Student", html)
+        self.assertIn("Email address or username", html)
+        self.assertIn("Remember me", html)
+        self.assertIn("Forgot password?", html)
 
     def test_school_admin_dashboard_exposes_import_and_export(self):
         client = run.app.test_client()
@@ -146,9 +159,9 @@ class DashboardTests(unittest.TestCase):
         html = client.get("/my-results").get_data(as_text=True)
         self.assertIn("JHS 2", html)
         self.assertIn("Promoted from JHS 1 to JHS 2", html)
-        self.assertIn("TERMINAL REPORT", html)
-        self.assertIn("CLASS SCORE", html)
-        self.assertIn("HEADTEACHER", html)
+        self.assertIn("Terminal Report", html)
+        self.assertIn("Class Score", html)
+        self.assertIn("HEAD OF SCHOOL", html)
         pdf = client.get("/my-results.pdf")
         self.assertEqual(pdf.status_code, 200)
         self.assertEqual(pdf.mimetype, "application/pdf")
@@ -215,7 +228,7 @@ class DashboardTests(unittest.TestCase):
                 f"/payments/paystack/callback?reference={payment.reference}",
                 follow_redirects=True)
         self.assertEqual(verified.status_code, 200)
-        self.assertIn("ACADEMIC REPORT CARD", verified.get_data(as_text=True))
+        self.assertIn("Terminal Report", verified.get_data(as_text=True))
         self.assertEqual(payment.status, "success")
 
     def test_paystack_webhook_requires_valid_signature(self):
