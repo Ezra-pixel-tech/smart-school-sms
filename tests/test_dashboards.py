@@ -127,6 +127,40 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 302)
         self.assertIn("/dashboard", accepted.location)
 
+    def test_login_checks_the_correct_school_when_usernames_repeat(self):
+        first_school = run.School(name="First Duplicate Username School")
+        second_school = run.School(name="Second Duplicate Username School")
+        run.db.session.add_all([first_school, second_school])
+        run.db.session.flush()
+        run.db.session.add_all([
+            run.User(
+                school_id=first_school.id, role="school_admin",
+                full_name="First Ezra", username="ezra",
+                password_hash=generate_password_hash("Wrong@12345"),
+                must_change_password=False,
+            ),
+            run.User(
+                school_id=second_school.id, role="school_admin",
+                full_name="Second Ezra", username="ezra",
+                password_hash=generate_password_hash("Correct@12345"),
+                must_change_password=False,
+            ),
+        ])
+        run.db.session.commit()
+
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["_csrf"] = "test-csrf"
+        response = client.post("/login?portal=admin", data={
+            "_csrf": "test-csrf", "portal": "admin",
+            "username": "Ezra", "password": "Correct@12345",
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/dashboard", response.location)
+        with client.session_transaction() as session:
+            logged_in = run.db.session.get(run.User, session["user_id"])
+        self.assertEqual(logged_in.full_name, "Second Ezra")
+
     def test_school_admin_dashboard_exposes_import_and_export(self):
         client = run.app.test_client()
         with client.session_transaction() as session:
