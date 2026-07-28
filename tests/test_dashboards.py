@@ -100,6 +100,28 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Email address or username", html)
         self.assertIn("Remember me", html)
         self.assertIn("Forgot password?", html)
+        self.assertIn("Enter your username", html)
+
+    def test_login_accepts_username_not_email(self):
+        account = self.users["school_admin"]
+        account.email = "school-admin-login@example.com"
+        run.db.session.commit()
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["_csrf"] = "test-csrf"
+        rejected = client.post("/login?portal=admin", data={
+            "_csrf": "test-csrf", "portal": "admin",
+            "username": account.email, "password": "Test@12345",
+        })
+        self.assertEqual(rejected.status_code, 200)
+        with client.session_transaction() as session:
+            session["_csrf"] = "test-csrf"
+        accepted = client.post("/login?portal=admin", data={
+            "_csrf": "test-csrf", "portal": "admin",
+            "username": account.username, "password": "Test@12345",
+        })
+        self.assertEqual(accepted.status_code, 302)
+        self.assertIn("/dashboard", accepted.location)
 
     def test_school_admin_dashboard_exposes_import_and_export(self):
         client = run.app.test_client()
@@ -161,11 +183,37 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Promoted from JHS 1 to JHS 2", html)
         self.assertIn("Terminal Report", html)
         self.assertIn("Class Score", html)
-        self.assertIn("HEAD OF SCHOOL", html)
+        self.assertIn("Head of School", html)
         pdf = client.get("/my-results.pdf")
         self.assertEqual(pdf.status_code, 200)
         self.assertEqual(pdf.mimetype, "application/pdf")
         self.assertTrue(pdf.data.startswith(b"%PDF"))
+
+    def test_staff_report_preview_and_publish_controls(self):
+        student = run.Student.query.filter_by(
+            user_id=self.users["student"].id).first()
+        if not student.class_id:
+            class_group = run.ClassRoom(
+                school_id=self.school.id, name="Preview Class")
+            run.db.session.add(class_group)
+            run.db.session.flush()
+            student.class_id = class_group.id
+            run.db.session.commit()
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = self.users["school_admin"].id
+            session["_csrf"] = "test-csrf"
+        listing = client.get("/report-cards")
+        self.assertEqual(listing.status_code, 200)
+        preview = client.get(f"/report-cards/{student.id}/preview")
+        html = preview.get_data(as_text=True)
+        self.assertEqual(preview.status_code, 200)
+        self.assertIn("Publish Report", html)
+        self.assertIn("reference-report", html)
+        published = client.post(
+            f"/report-cards/{student.id}/publish",
+            data={"_csrf": "test-csrf"}, follow_redirects=True)
+        self.assertEqual(published.status_code, 200)
 
     def test_student_report_is_locked_without_payment(self):
         Payment = run.app.feature_models["StudentReportPayment"]

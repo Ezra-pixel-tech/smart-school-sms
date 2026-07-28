@@ -1065,6 +1065,7 @@ html[data-theme="dark"] body{background:var(--app-bg);color:var(--app-text)}html
 html[data-theme="dark"] .topbar,html[data-theme="dark"] .card,html[data-theme="dark"] .kpi-card,html[data-theme="dark"] .period-chip,html[data-theme="dark"] .table-shell,html[data-theme="dark"] .table-tools,html[data-theme="dark"] input,html[data-theme="dark"] select,html[data-theme="dark"] textarea,html[data-theme="dark"] table,html[data-theme="dark"] td,html[data-theme="dark"] th{background:var(--app-surface)!important;color:var(--app-text)!important;border-color:var(--app-border)!important}
 html[data-theme="dark"] th,html[data-theme="dark"] .table-pagination{background:var(--app-surface-2)!important}html[data-theme="dark"] .muted,html[data-theme="dark"] .page-heading p,html[data-theme="dark"] .panel-heading p,html[data-theme="dark"] small{color:var(--app-muted)!important}html[data-theme="dark"] tbody tr:hover td{background:#1b2b45!important}
 .topbar{background:var(--app-surface);color:var(--app-text);border-color:var(--app-border)}.nav{max-width:none}.app-search{width:min(430px,36vw);margin:0;min-height:40px;background:var(--app-surface-2)!important}.nav-tools{display:flex;align-items:center;gap:8px}.icon-button{display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--app-border);border-radius:10px;background:var(--app-surface);color:var(--app-text);cursor:pointer;font-size:17px}.icon-button:hover{background:var(--brand-soft);color:var(--app-primary)}.profile-chip{display:flex;align-items:center;gap:9px;padding:5px 8px;border-radius:10px}.profile-avatar{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:#dbeafe;color:#0757d9;font-weight:900}.layout{grid-template-columns:244px minmax(0,1fr)}.side{background:var(--app-surface)!important;color:var(--app-text)!important;border:1px solid var(--app-border);box-shadow:var(--app-shadow);border-radius:0;top:88px}.side strong{color:var(--app-primary)}.side>p{color:var(--app-muted)!important}.side a{color:var(--app-text)!important}.side a:before{border-color:#94a3b8}.side a:hover,.side a:focus-visible{background:#eaf2ff!important;color:#0757d9!important}.sidebar-collapsed .layout{grid-template-columns:78px minmax(0,1fr)}.sidebar-collapsed .side{padding-inline:10px}.sidebar-collapsed .side strong,.sidebar-collapsed .side>p{font-size:0}.sidebar-collapsed .side a{font-size:0;justify-content:center}.sidebar-collapsed .side a:before{margin:0;width:11px;height:11px}.card,.kpi-card{background:var(--app-surface);border-color:var(--app-border);box-shadow:var(--app-shadow)}.page-heading h1{color:var(--app-text)}.dashboard-content{gap:22px}.kpi-card{min-height:116px}.kpi-card strong{font-size:28px}.dashboard-reference-grid{display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:18px}.attention-list{display:grid}.attention-item{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--app-border)}.attention-item:last-child{border:0}.attention-item b{font-size:13px}.attention-item small{display:block}.attention-count{margin-left:auto;border-radius:8px;padding:4px 9px;background:#fee2e2;color:#be123c;font-weight:800}.enrollment-list{display:grid;gap:11px}.enrollment-item{display:grid;grid-template-columns:10px 1fr auto;gap:9px;align-items:center;font-size:12px}.enrollment-dot{width:9px;height:9px;border-radius:50%;background:var(--dot,#0757d9)}.attendance-meter{height:16px;border-radius:99px;background:#e7edf6;overflow:hidden;margin:42px 0 20px}.attendance-meter span{display:block;height:100%;width:calc(var(--attendance,0)*1%);background:linear-gradient(90deg,#0757d9,#4c8cff)}.dashboard-section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.dashboard-section-title h2{font-size:15px;margin:0}
+.nav-section{display:block;margin:18px 10px 6px;color:var(--app-muted);font-size:10px;font-weight:850;letter-spacing:.09em;text-transform:uppercase}.sidebar-collapsed .nav-section{font-size:0;margin:10px 0;border-top:1px solid var(--app-border)}
 .login-shell{padding:34px;background:radial-gradient(circle at 90% 10%,#e8f1ff,transparent 33%),linear-gradient(145deg,#f8fbff,#eef5ff)}.auth-card{display:grid;grid-template-columns:1fr 1.15fr;width:min(1080px,96vw);padding:0!important;overflow:hidden;border-radius:24px}.auth-brand-panel{display:grid;place-items:center;text-align:center;min-height:670px;padding:54px;color:#fff;background:radial-gradient(circle at 70% 35%,#0f69f2,transparent 45%),linear-gradient(145deg,#061c56,#064fd5)}.auth-brand-panel img{width:150px;height:150px;object-fit:contain;filter:drop-shadow(0 12px 24px rgba(0,0,0,.18))}.auth-brand-panel h1{font-size:39px;margin:18px 0}.auth-brand-panel p{font-size:20px}.auth-form-panel{padding:64px 60px;background:var(--app-surface)}.auth-form-panel h2{font-size:38px;margin:0}.role-tabs{display:grid;grid-template-columns:repeat(4,1fr);margin:26px 0;border:1px solid var(--app-border);border-radius:12px;overflow:hidden}.role-tab{display:grid;place-items:center;gap:5px;min-height:82px;padding:10px 6px;border-right:1px solid var(--app-border);font-size:12px;font-weight:750}.role-tab:last-child{border:0}.role-tab.active{background:#eef5ff;color:#0757d9;box-shadow:inset 0 0 0 1px #7fb0ff}.auth-options{display:flex;align-items:center;justify-content:space-between;gap:16px}.remember-label{display:flex;align-items:center;gap:8px}.remember-label input{width:18px;min-height:18px;margin:0}.auth-submit{width:100%;justify-content:center;font-size:16px}.login-help{text-align:center;margin-top:30px}
 @media(max-width:1180px){.dashboard-reference-grid{grid-template-columns:1fr 1fr}.dashboard-reference-grid>*:last-child{grid-column:1/-1}}@media(max-width:940px){.app-search{display:none}.sidebar-collapsed .layout,.layout{grid-template-columns:1fr}.side{border-radius:12px;top:0}.auth-card{grid-template-columns:1fr}.auth-brand-panel{display:none}.auth-form-panel{padding:42px}}@media(max-width:620px){.profile-chip span:last-child{display:none}.auth-form-panel{padding:28px 20px}.role-tabs{grid-template-columns:repeat(2,1fr)}.role-tab:nth-child(2){border-right:0}.dashboard-reference-grid{grid-template-columns:1fr}.dashboard-reference-grid>*:last-child{grid-column:auto}}
 /* Screenshot-faithful dashboard composition */
@@ -1113,6 +1114,12 @@ document.querySelectorAll('input[type="password"]').forEach(function(input) {
   });
   wrap.appendChild(button);
 });
+const loginUsername=document.querySelector('.auth-form-panel input[name="username"]');
+if(loginUsername){
+  loginUsername.placeholder='Enter your username';
+  const loginLabel=loginUsername.closest('label');
+  if(loginLabel && loginLabel.firstChild) loginLabel.firstChild.nodeValue='Username';
+}
 document.querySelectorAll('.terminal .remarks td').forEach(function(cell) {
   cell.innerHTML = cell.innerHTML.replace(/Fee Balance:\\s*([0-9,.]+)/g, 'Fee Balance: <span class="cedi">GH₵ $1</span>');
 });
@@ -1195,12 +1202,11 @@ SIDEBAR = """
 <aside class="side no-print"><strong>{{ role_label(user.role) }}</strong><p class="muted" style="color:#bcd0ec">{{ user.full_name }}</p>
 <a href="{{ url_for('dashboard') }}">Dashboard</a>
 {% if user.role == 'system_admin' %}<a href="{{ url_for('schools') }}">Schools</a>{% endif %}
-{% if user.role == 'school_admin' %}<a href="{{ url_for('users') }}">User Management</a><a href="{{ url_for('parent_links') }}">Parents & Guardians</a><a href="{{ url_for('teachers') }}">Teachers</a><a href="{{ url_for('teacher_assignments') }}">Teaching Assignments</a><a href="{{ url_for('classes_subjects') }}">Classes & Subjects</a><a href="{{ url_for('bulk_import') }}">Import Excel / CSV</a><a href="{{ url_for('export_school_records') }}">Export School Data</a>{% endif %}
+{% if user.role == 'school_admin' %}<span class="nav-section">People</span><a href="{{ url_for('students') }}">Students</a><a href="{{ url_for('teachers') }}">Staff</a><a href="{{ url_for('parent_links') }}">Parents</a><span class="nav-section">Academics</span><a href="{{ url_for('classes_subjects') }}">Classes & Subjects</a><a href="{{ url_for('attendance') }}">Attendance</a><a href="{{ url_for('scores') }}">Assessments</a><a href="{{ url_for('report_cards') }}">Report Cards</a><span class="nav-section">Finance</span><a href="{{ url_for('fees') }}">Fees & Payments</a><span class="nav-section">Data Tools</span><a href="{{ url_for('bulk_import') }}">Import Excel / CSV</a><a href="{{ url_for('export_school_records') }}">Export School Data</a><span class="nav-section">Settings</span><a href="{{ url_for('users') }}">User Management</a><a href="{{ url_for('teacher_assignments') }}">Teaching Assignments</a>{% endif %}
 {% if user.role in ['teacher','registrar'] %}<a href="{{ url_for('students') }}">{{ 'My Students' if user.role == 'teacher' else 'Students & Admissions' }}</a>{% endif %}{% if user.role == 'teacher' %}<a href="{{ url_for('attendance') }}">Attendance</a>{% endif %}
 {% if user.role in ['school_admin','teacher'] %}<a href="{{ url_for('promotions') }}">Promotions</a>{% endif %}
-{% if user.role in ['school_admin','teacher'] %}<a href="{{ url_for('report_details') }}">Report Details</a>{% endif %}
-{% if user.role in ['school_admin','teacher'] %}<a href="{{ url_for('scores') }}">Scores</a>{% endif %}
-{% if user.role in ['school_admin','accountant'] %}<a href="{{ url_for('fees') }}">Fees & Payments</a>{% endif %}{% if user.role == 'school_admin' %}<a href="{{ url_for('onboarding') }}">School Profile</a>{% endif %}
+{% if user.role == 'teacher' %}<a href="{{ url_for('report_details') }}">Report Details</a><a href="{{ url_for('report_cards') }}">Report Cards</a><a href="{{ url_for('scores') }}">Scores</a>{% endif %}
+{% if user.role == 'accountant' %}<a href="{{ url_for('fees') }}">Fees & Payments</a>{% endif %}{% if user.role == 'school_admin' %}<a href="{{ url_for('onboarding') }}">School Profile</a>{% endif %}
 {% if user.role in ['system_admin','school_admin'] %}<a href="{{ url_for('communications') }}">SMS & Email</a>{% endif %}
 {% if user.role == 'system_admin' %}<a href="{{ url_for('audit_logs') }}">Audit Log</a>{% endif %}
 {% if user.role in ['school_admin','teacher','student'] %}<a href="{{ url_for('announcements') }}">Notices</a><a href="{{ url_for('calendar') }}">Calendar</a><a href="{{ url_for('timetable') }}">Timetable</a><a href="{{ url_for('library') }}">Library</a>{% endif %}
@@ -1294,6 +1300,28 @@ REPORT_CARD_PAGE = """
 <table class="grading-key"><tr><th>80 - 100</th><th>70 - 79</th><th>65 - 69</th><th>60 - 64</th><th>55 - 59</th><th>50 - 54</th><th>45 - 49</th><th>40 - 44</th><th>0 - 39</th></tr><tr><td>A1</td><td>B2</td><td>B3</td><td>C4</td><td>C5</td><td>C6</td><td>D7</td><td>E8</td><td>F9</td></tr><tr><td>Excellent</td><td>Very Good</td><td>Good</td><td>Credit</td><td>Credit</td><td>Credit</td><td>Pass</td><td>Pass</td><td>Fail</td></tr></table>
 <p class="powered">Powered by Smart School SMS</p>
 </section></div></main>
+"""
+
+
+REPORT_CARD_PAGE = """
+<main class="wrap report-preview-shell"><div class="layout">""" + SIDEBAR + """<section class="report-preview-workspace">
+<div class="report-toolbar no-print"><a class="btn ghost" href="{{ request.referrer or url_for('dashboard') }}">← Back</a><div class="report-toolbar-actions">{% if user.role == 'student' %}<a class="btn ghost" href="{{ url_for('student_results_pdf') }}">Download PDF</a>{% endif %}<button class="btn ghost" type="button" onclick="window.print()">Print</button>{% if user.role in ['school_admin','teacher'] %}<form method="post" action="{{ url_for('publish_student_report',student_id=student.id) }}" data-confirm="Publish this report for the current academic period?">{{ csrf() }}<button class="btn" type="submit">Publish Report</button></form>{% endif %}</div></div>
+<article class="reference-report">
+<header class="reference-report-head"><div class="report-brand">{% if school.crest %}<img src="{{ url_for('uploads',filename=school.crest) }}" alt="{{ school.name }} crest">{% else %}<img src="{{ url_for('static',filename='smart-school-logo.png') }}" alt="Smart School SMS logo">{% endif %}<strong>{{ school.name }}</strong></div><div class="academic-year-box"><span>Academic Year</span><b>{{ school.academic_year or '-' }}</b></div></header>
+<h1>Terminal Report</h1>
+<section class="report-student-grid"><div><b>Student Name:</b><span>{{ report_user.full_name }}</span><b>Student ID:</b><span>{{ student.admission_no }}</span><b>Class:</b><span>{{ student_class.name if student_class else '-' }}</span></div><div><b>Term:</b><span>{{ school.term or '-' }}</span><b>Position:</b><span>{{ position or '-' }}</span><b>Number on Roll:</b><span>{{ detail.number_on_roll if detail and detail.number_on_roll else '-' }}</span></div></section>
+<table class="reference-subject-table"><thead><tr><th>Subject</th><th>Class Score<br>(30%)</th><th>Exam Score<br>(70%)</th><th>Total<br>(100%)</th><th>Grade</th><th>Remark</th></tr></thead><tbody>{% for score,subject in rows %}{% set total=score.class_score+score.exam_score %}{% set info=grade_info(total) %}<tr><td>{{ subject.name }}</td><td>{{ score.class_score }}</td><td>{{ score.exam_score }}</td><td><b>{{ total }}</b></td><td><span class="report-grade grade-{{ info.grade|lower }}">{{ info.grade }}</span></td><td>{{ score.remarks or info.interpretation }}</td></tr>{% else %}<tr><td colspan="6">No results have been entered yet.</td></tr>{% endfor %}</tbody></table>
+<section class="report-summary-strip"><div><span>Average</span><b>{{ average }}%</b></div><div><span>Attendance</span><b>{{ ((attendance.present_days / attendance.total_days * 100)|round(1)) if attendance and attendance.total_days else 0 }}%</b></div><div><span>Conduct</span><b class="success-text">{{ conduct or (detail.attitude if detail and detail.attitude else 'Good') }}</b></div><div><span>Days Present</span><b>{{ attendance.present_days if attendance else 0 }}</b></div><div><span>Days Absent</span><b>{{ detail.absent_days if detail else 0 }}</b></div></section>
+<section class="teacher-remarks"><b>Class Teacher's Remarks</b><p>{{ detail.class_teacher_remarks if detail and detail.class_teacher_remarks else overall.interpretation }}</p><b>Promotion Status</b><p>{{ student.promotion_note or 'Not promoted' }}</p></section>
+<section class="report-signatures"><div><b>Class Teacher</b><span class="signature-line"></span><small>{{ detail.class_teacher_remarks if detail and detail.class_teacher_remarks else 'Report prepared by the assigned class teacher' }}</small></div><div class="school-seal">{{ school.name[:2]|upper }}</div><div><b>{{ school.head_title or 'Headteacher' }}</b>{% if school.head_signature %}<img src="{{ url_for('uploads',filename=school.head_signature) }}" alt="Headteacher signature">{% else %}<span class="signature-line"></span>{% endif %}<small>{{ school.head_name or school.name }}</small></div></section>
+<section class="reference-grading-key"><strong>Grading Key</strong>{% for range,label,text in [('80–100','A1','Excellent'),('70–79','B2','Very Good'),('65–69','B3','Good'),('60–64','C4','Credit'),('0–39','F9','Fail')] %}<div><b>{{ label }}</b><span>{{ range }}</span><small>{{ text }}</small></div>{% endfor %}</section>
+<footer><span></span><em>{{ school.motto or 'Learn • Lead • Inspire' }}</em><span></span></footer>
+</article></section></div></main>
+<style>
+.report-preview-shell{max-width:1500px}.report-preview-workspace{min-width:0}.report-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}.report-toolbar-actions{display:flex;align-items:center;gap:10px}.report-toolbar-actions form{display:block}.reference-report{width:min(760px,100%);margin:auto;padding:28px 38px;background:#fff;color:#111827;box-shadow:0 8px 28px rgba(15,23,42,.18)}.reference-report-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:3px solid #0a4aa6}.report-brand{display:flex;align-items:center;gap:16px;color:#0a3f91;font-size:22px}.report-brand img{width:72px;height:60px;object-fit:contain}.academic-year-box{padding:8px 18px;border:1px solid #0a4aa6;border-radius:6px;text-align:center;text-transform:uppercase;font-size:9px}.academic-year-box span{display:block}.academic-year-box b{font-size:11px}.reference-report>h1{text-align:center;margin:10px 0 12px;color:#0a3f91;font-size:20px;text-transform:uppercase}.report-student-grid{display:grid;grid-template-columns:1fr 1fr;gap:42px;margin-bottom:12px}.report-student-grid>div{display:grid;grid-template-columns:105px 1fr;gap:5px;font-size:11px}.reference-subject-table{border:1px solid #cbd5e1;border-radius:6px;box-shadow:none}.reference-subject-table th{background:#0a3f91!important;color:#fff!important;text-align:center}.reference-subject-table td,.reference-subject-table th{padding:6px 9px;font-size:10px}.reference-subject-table td:not(:first-child){text-align:center}.report-grade{display:inline-grid;place-items:center;min-width:32px;padding:2px 6px;border:1px solid #31a354;border-radius:4px;background:#effcf3;color:#16803b;font-weight:800}.grade-c4,.grade-c5,.grade-c6{border-color:#f59e0b;background:#fffbeb;color:#b45309}.grade-d7,.grade-e8,.grade-f9{border-color:#ef4444;background:#fff1f2;color:#be123c}.report-summary-strip{display:grid;grid-template-columns:repeat(5,1fr);margin:14px 0;padding:10px 8px;border:1px solid #0a4aa6;border-radius:6px}.report-summary-strip div{display:grid;gap:4px;text-align:center;border-right:1px solid #dbe3ee}.report-summary-strip div:last-child{border:0}.report-summary-strip span,.report-summary-strip small{font-size:9px}.report-summary-strip b{color:#0a3f91}.success-text{color:#16803b!important}.teacher-remarks{font-size:10px}.teacher-remarks p{margin:4px 0 12px}.report-signatures{display:grid;grid-template-columns:1fr 90px 1fr;align-items:end;gap:26px;margin:10px 14px 18px;text-align:center}.report-signatures>div{display:grid;gap:5px}.report-signatures img{height:34px;max-width:130px;margin:auto;object-fit:contain}.report-signatures small{font-size:8px}.school-seal{place-self:center;width:66px;height:66px;border:3px double #0a4aa6;border-radius:50%;align-content:center;color:#0a4aa6;font-weight:900}.reference-grading-key{display:grid;grid-template-columns:80px repeat(5,1fr);border:1px solid #0a4aa6;border-radius:5px;overflow:hidden}.reference-grading-key>strong{display:grid;place-items:center;background:#0a3f91;color:#fff;text-transform:uppercase;font-size:10px}.reference-grading-key>div{display:grid;padding:5px;text-align:center;border-left:1px solid #dbe3ee;font-size:9px}.reference-grading-key small{font-size:7px}.reference-report footer{display:flex;align-items:center;gap:16px;margin-top:14px;color:#0a3f91;text-align:center}.reference-report footer span{height:1px;flex:1;background:#0a4aa6}.reference-report footer em{font-family:Georgia,serif}
+@media(max-width:700px){.report-toolbar,.report-toolbar-actions{align-items:stretch;flex-direction:column}.report-student-grid{grid-template-columns:1fr;gap:6px}.reference-report{padding:22px 16px}.report-summary-strip{grid-template-columns:1fr 1fr}.report-summary-strip div{border-bottom:1px solid #dbe3ee}.report-signatures{grid-template-columns:1fr}.reference-grading-key{grid-template-columns:1fr 1fr}.reference-grading-key>strong{grid-column:1/-1;padding:8px}}
+@media print{@page{size:A4;margin:8mm}.topbar,.side,.report-toolbar{display:none!important}.wrap,.layout,.report-preview-shell{display:block!important;max-width:none!important;padding:0!important}.reference-report{width:100%;max-width:none;padding:8mm!important;box-shadow:none!important}.reference-report td,.reference-report th{font-size:8px!important}}
+</style>
 """
 
 
@@ -1397,12 +1425,10 @@ def register_routes(app: Flask) -> None:
                 flash(
                     "Too many login attempts. Please wait before trying again.", "error")
                 return render("""<main class="login-shell"><section class="card login-card"><h2>Login temporarily limited</h2><p class="muted">Please wait and try again later.</p><a class="btn ghost" href="{{ url_for('login', portal=portal) }}">Back</a></section></main>""", title="Login limited", portal=portal), 429
-            matches = User.query.filter(
+            user = User.query.filter(
                 User.active.is_(True),
-                or_(func.lower(User.username) == identity,
-                    func.lower(User.email) == identity),
-            ).all()
-            user = matches[0] if len(matches) == 1 else None
+                func.lower(User.username) == identity,
+            ).first()
             if user and (not allowed_roles or user.role in allowed_roles) and check_password_hash(user.password_hash, request.form["password"]):
                 session.clear()
                 csrf_token()
@@ -2197,6 +2223,62 @@ def register_routes(app: Flask) -> None:
                 flash("Please check the date and numeric report fields.", "error")
         students = db.session.query(Student, User, ClassRoom).join(User, Student.user_id == User.id).outerjoin(ClassRoom, Student.class_id == ClassRoom.id).filter(Student.school_id == sid, Student.class_id.in_(class_ids)).order_by(ClassRoom.name, User.full_name).all() if class_ids else []
         return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>Complete Report Card Details</h2><p class="muted">Subject marks come from Scores. Complete attendance, remarks, next-term date and fee details here.</p>{% for category,message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}<label>Student<select name="student_id" required>{% for student,account,class_group in students %}<option value="{{ student.id }}">{{ account.full_name }} · {{ class_group.name if class_group else '-' }}</option>{% endfor %}</select></label>{{ field('Term','term',value=school.term,required=true) }}{{ field('Academic Year','academic_year',value=school.academic_year,required=true) }}{{ field('Number on Roll','number_on_roll','number') }}{{ field('Next Term Begins','next_term_begins','date') }}{{ field('Present Days','present_days','number') }}{{ field('Total School Days','total_days','number') }}{{ field('Absent Days','absent_days','number') }}{{ field('Late Days','late_days','number') }}{{ field('Interest','interest') }}{{ field('Attitude','attitude') }}<label>Class Teacher Remarks<textarea name="class_teacher_remarks"></textarea></label><label>Head Teacher Remarks<textarea name="head_teacher_remarks"></textarea></label>{{ field('Arrears From Last Term','arrears','number') }}{{ field('Tuition / School Fees','tuition_fees','number') }}{{ field('PTA Dues','pta_dues','number') }}{{ field('Medical Dues','medical_dues','number') }}{{ field('Building Fund','building_fund','number') }}<button class="btn green">Save Report Details</button></form></article></section></div></main>""", title="Report Details", students=students)
+
+    @app.route("/report-cards")
+    @login_required("school_admin", "teacher")
+    @school_required
+    def report_cards():
+        user = current_user()
+        class_ids = teacher_class_ids(user) if user.role == "teacher" else [
+            row[0] for row in db.session.query(ClassRoom.id).filter_by(
+                school_id=user.school_id).all()]
+        students = db.session.query(Student, User, ClassRoom).join(
+            User, Student.user_id == User.id
+        ).outerjoin(
+            ClassRoom, Student.class_id == ClassRoom.id
+        ).filter(
+            Student.school_id == user.school_id,
+            Student.class_id.in_(class_ids),
+        ).order_by(ClassRoom.name, User.full_name).all() if class_ids else []
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><header class="page-heading"><div><h1>Report Cards</h1><p>Select a student to preview the current-period report before publishing or printing it.</p></div><a class="btn ghost" href="{{ url_for('report_details') }}">Edit Report Details</a></header><article class="card"><div class="table-head"><div><h2>Student Reports</h2><p class="muted">{{ school.term }} · {{ school.academic_year }}</p></div><input class="table-search" type="search" placeholder="Search students or classes"></div><table><thead><tr><th>Student</th><th>Student ID</th><th>Class</th><th>Action</th></tr></thead><tbody>{% for student,account,class_group in students %}<tr><td><b>{{ account.full_name }}</b></td><td>{{ student.admission_no }}</td><td>{{ class_group.name if class_group else '-' }}</td><td><a class="btn ghost" href="{{ url_for('staff_report_preview',student_id=student.id) }}">Preview</a></td></tr>{% else %}<tr><td colspan="4"><div class="empty-state"><b>No students available</b><span>Add students and assign them to a class first.</span></div></td></tr>{% endfor %}</tbody></table></article></section></div></main>""", title="Report Cards", students=students)
+
+    @app.route("/report-cards/<int:student_id>/preview")
+    @login_required("school_admin", "teacher")
+    @school_required
+    def staff_report_preview(student_id):
+        user = current_user()
+        school = current_school()
+        student = Student.query.filter_by(
+            id=student_id, school_id=user.school_id).first_or_404()
+        if user.role == "teacher" and student.class_id not in teacher_class_ids(user):
+            abort(403)
+        report_user = db.session.get(User, student.user_id)
+        if not report_user:
+            abort(404)
+        return render(REPORT_CARD_PAGE, title="Report Card Preview",
+                      **build_report_context(student, school, report_user))
+
+    @app.route("/report-cards/<int:student_id>/publish", methods=["POST"])
+    @login_required("school_admin", "teacher")
+    @school_required
+    def publish_student_report(student_id):
+        user = current_user()
+        school = current_school()
+        student = Student.query.filter_by(
+            id=student_id, school_id=user.school_id).first_or_404()
+        if user.role == "teacher" and student.class_id not in teacher_class_ids(user):
+            abort(403)
+        score_count = Score.query.filter_by(
+            school_id=user.school_id, student_id=student.id,
+            term=school.term, academic_year=school.academic_year).count()
+        if not score_count:
+            flash("Enter at least one subject score before publishing this report.", "error")
+        else:
+            log_action("publish_report",
+                       f"Published {student.admission_no} for {school.term} {school.academic_year}")
+            db.session.commit()
+            flash("Report published successfully.", "success")
+        return redirect(url_for("staff_report_preview", student_id=student.id))
 
     @app.route("/scores", methods=["GET", "POST"])
     @login_required("school_admin", "teacher")
