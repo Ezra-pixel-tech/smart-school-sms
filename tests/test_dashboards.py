@@ -101,6 +101,10 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Remember me", html)
         self.assertIn("Forgot password?", html)
         self.assertIn("Enter your username", html)
+        self.assertIn("auth-brand-panel.role-admin", html)
+        self.assertIn("auth-brand-panel.role-teacher", html)
+        self.assertIn("auth-brand-panel.role-parent", html)
+        self.assertIn("auth-brand-panel.role-student", html)
 
     def test_login_accepts_username_not_email(self):
         account = self.users["school_admin"]
@@ -158,6 +162,18 @@ class DashboardTests(unittest.TestCase):
                     session["_csrf"] = "test-csrf"
                 response = client.get("/students")
                 self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+
+    def test_dashboard_search_finds_students_and_staff(self):
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = self.users["school_admin"].id
+            session["_csrf"] = "test-csrf"
+        student_results = client.get("/search?q=Student")
+        self.assertEqual(student_results.status_code, 200)
+        self.assertIn("TEST001", student_results.get_data(as_text=True))
+        staff_results = client.get("/search?q=Teacher")
+        self.assertEqual(staff_results.status_code, 200)
+        self.assertIn("dashboard_teacher", staff_results.get_data(as_text=True))
 
     def test_report_includes_class_and_promotion_status(self):
         student = run.Student.query.filter_by(user_id=self.users["student"].id).first()

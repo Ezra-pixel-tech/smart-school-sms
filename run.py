@@ -1067,6 +1067,7 @@ html[data-theme="dark"] th,html[data-theme="dark"] .table-pagination{background:
 .topbar{background:var(--app-surface);color:var(--app-text);border-color:var(--app-border)}.nav{max-width:none}.app-search{width:min(430px,36vw);margin:0;min-height:40px;background:var(--app-surface-2)!important}.nav-tools{display:flex;align-items:center;gap:8px}.icon-button{display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--app-border);border-radius:10px;background:var(--app-surface);color:var(--app-text);cursor:pointer;font-size:17px}.icon-button:hover{background:var(--brand-soft);color:var(--app-primary)}.profile-chip{display:flex;align-items:center;gap:9px;padding:5px 8px;border-radius:10px}.profile-avatar{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:#dbeafe;color:#0757d9;font-weight:900}.layout{grid-template-columns:244px minmax(0,1fr)}.side{background:var(--app-surface)!important;color:var(--app-text)!important;border:1px solid var(--app-border);box-shadow:var(--app-shadow);border-radius:0;top:88px}.side strong{color:var(--app-primary)}.side>p{color:var(--app-muted)!important}.side a{color:var(--app-text)!important}.side a:before{border-color:#94a3b8}.side a:hover,.side a:focus-visible{background:#eaf2ff!important;color:#0757d9!important}.sidebar-collapsed .layout{grid-template-columns:78px minmax(0,1fr)}.sidebar-collapsed .side{padding-inline:10px}.sidebar-collapsed .side strong,.sidebar-collapsed .side>p{font-size:0}.sidebar-collapsed .side a{font-size:0;justify-content:center}.sidebar-collapsed .side a:before{margin:0;width:11px;height:11px}.card,.kpi-card{background:var(--app-surface);border-color:var(--app-border);box-shadow:var(--app-shadow)}.page-heading h1{color:var(--app-text)}.dashboard-content{gap:22px}.kpi-card{min-height:116px}.kpi-card strong{font-size:28px}.dashboard-reference-grid{display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:18px}.attention-list{display:grid}.attention-item{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--app-border)}.attention-item:last-child{border:0}.attention-item b{font-size:13px}.attention-item small{display:block}.attention-count{margin-left:auto;border-radius:8px;padding:4px 9px;background:#fee2e2;color:#be123c;font-weight:800}.enrollment-list{display:grid;gap:11px}.enrollment-item{display:grid;grid-template-columns:10px 1fr auto;gap:9px;align-items:center;font-size:12px}.enrollment-dot{width:9px;height:9px;border-radius:50%;background:var(--dot,#0757d9)}.attendance-meter{height:16px;border-radius:99px;background:#e7edf6;overflow:hidden;margin:42px 0 20px}.attendance-meter span{display:block;height:100%;width:calc(var(--attendance,0)*1%);background:linear-gradient(90deg,#0757d9,#4c8cff)}.dashboard-section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.dashboard-section-title h2{font-size:15px;margin:0}
 .nav-section{display:block;margin:18px 10px 6px;color:var(--app-muted);font-size:10px;font-weight:850;letter-spacing:.09em;text-transform:uppercase}.sidebar-collapsed .nav-section{font-size:0;margin:10px 0;border-top:1px solid var(--app-border)}
 .login-shell{padding:34px;background:radial-gradient(circle at 90% 10%,#e8f1ff,transparent 33%),linear-gradient(145deg,#f8fbff,#eef5ff)}.auth-card{display:grid;grid-template-columns:1fr 1.15fr;width:min(1080px,96vw);padding:0!important;overflow:hidden;border-radius:24px}.auth-brand-panel{display:grid;place-items:center;text-align:center;min-height:670px;padding:54px;color:#fff;background:radial-gradient(circle at 70% 35%,#0f69f2,transparent 45%),linear-gradient(145deg,#061c56,#064fd5)}.auth-brand-panel img{width:150px;height:150px;object-fit:contain;filter:drop-shadow(0 12px 24px rgba(0,0,0,.18))}.auth-brand-panel h1{font-size:39px;margin:18px 0}.auth-brand-panel p{font-size:20px}.auth-form-panel{padding:64px 60px;background:var(--app-surface)}.auth-form-panel h2{font-size:38px;margin:0}.role-tabs{display:grid;grid-template-columns:repeat(4,1fr);margin:26px 0;border:1px solid var(--app-border);border-radius:12px;overflow:hidden}.role-tab{display:grid;place-items:center;gap:5px;min-height:82px;padding:10px 6px;border-right:1px solid var(--app-border);font-size:12px;font-weight:750}.role-tab:last-child{border:0}.role-tab.active{background:#eef5ff;color:#0757d9;box-shadow:inset 0 0 0 1px #7fb0ff}.auth-options{display:flex;align-items:center;justify-content:space-between;gap:16px}.remember-label{display:flex;align-items:center;gap:8px}.remember-label input{width:18px;min-height:18px;margin:0}.auth-submit{width:100%;justify-content:center;font-size:16px}.login-help{text-align:center;margin-top:30px}
+.auth-brand-panel.role-admin{background-image:linear-gradient(145deg,rgba(4,24,75,.88),rgba(0,77,207,.82)),url('https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&w=1100&q=85');background-size:cover;background-position:center}.auth-brand-panel.role-teacher{background-image:linear-gradient(145deg,rgba(4,45,33,.88),rgba(0,116,84,.78)),url('https://images.unsplash.com/photo-1588072432836-e10032774350?auto=format&fit=crop&w=1100&q=85');background-size:cover;background-position:center}.auth-brand-panel.role-student{background-image:linear-gradient(145deg,rgba(7,32,83,.86),rgba(0,91,203,.78)),url('https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?auto=format&fit=crop&w=1100&q=85');background-size:cover;background-position:center}.auth-brand-panel.role-parent{background-image:linear-gradient(145deg,rgba(52,22,91,.88),rgba(102,43,170,.76)),url('https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1100&q=85');background-size:cover;background-position:center}.auth-brand-panel[class*="role-"]>div{padding:28px;border-radius:20px;background:rgba(3,17,43,.36);backdrop-filter:blur(3px)}
 @media(max-width:1180px){.dashboard-reference-grid{grid-template-columns:1fr 1fr}.dashboard-reference-grid>*:last-child{grid-column:1/-1}}@media(max-width:940px){.app-search{display:none}.sidebar-collapsed .layout,.layout{grid-template-columns:1fr}.side{border-radius:12px;top:0}.auth-card{grid-template-columns:1fr}.auth-brand-panel{display:none}.auth-form-panel{padding:42px}}@media(max-width:620px){.profile-chip span:last-child{display:none}.auth-form-panel{padding:28px 20px}.role-tabs{grid-template-columns:repeat(2,1fr)}.role-tab:nth-child(2){border-right:0}.dashboard-reference-grid{grid-template-columns:1fr}.dashboard-reference-grid>*:last-child{grid-column:auto}}
 /* Screenshot-faithful dashboard composition */
 .reference-dashboard{gap:24px}.reference-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:24px}.reference-heading h1{margin:0 0 6px;font-size:25px;letter-spacing:-.035em}.reference-heading p{margin:0;color:var(--app-muted)}.reference-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.reference-kpis .kpi-card{display:grid;grid-template-columns:64px 1fr 34px;align-items:center;padding:22px 18px}.reference-kpis .kpi-icon{width:58px;height:58px;font-size:12px}.reference-kpis .trend-box{display:grid;place-items:center;width:32px;height:32px;border:1px solid #bfdbfe;border-radius:8px;color:#0757d9;background:#eff6ff}.reference-kpis .kpi-2 .trend-box{color:#0a9b54;background:#effcf4;border-color:#bbf7d0}.reference-kpis .kpi-3 .trend-box{color:#e97800;background:#fff8ec;border-color:#fed7aa}.reference-kpis .kpi-4 .trend-box{color:#db2777;background:#fff1f6;border-color:#fbcfe8}.reference-dashboard-grid{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:18px}.reference-dashboard-grid>.card{min-height:310px}.reference-bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.reference-line-chart{display:grid;grid-template-columns:45px 1fr;grid-template-rows:220px auto;gap:0 10px;padding:16px 0 0}.chart-axis{display:flex;flex-direction:column;justify-content:space-between;color:var(--app-muted);font-size:11px}.chart-plot{position:relative;border-left:1px solid var(--app-border);border-bottom:1px solid var(--app-border);background:repeating-linear-gradient(to bottom,transparent 0,transparent 54px,var(--app-border) 55px)}.chart-plot svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}.chart-plot polyline{fill:none;stroke:#1261e8;stroke-width:2.2;vector-effect:non-scaling-stroke}.chart-plot i{position:absolute;left:var(--x);top:var(--y);width:8px;height:8px;margin:-4px;border:2px solid #fff;border-radius:50%;background:#1261e8;box-shadow:0 0 0 1px #1261e8}.chart-rate{grid-column:2;text-align:center;margin-top:12px;color:#0757d9;font-weight:750;font-size:12px}.enrollment-visual{display:grid;grid-template-columns:160px 1fr;align-items:center;gap:22px;margin-top:36px}.enrollment-donut{display:grid;place-items:center;align-content:center;width:150px;height:150px;border-radius:50%;background:radial-gradient(circle,#fff 0 42%,transparent 43%),conic-gradient(#2672ef 0 44%,#12b76a 44% 73%,#fb8500 73% 91%,#8b5cf6 91% 97%,#ec4899 97%)}.enrollment-donut strong{font-size:22px}.enrollment-donut span{font-size:11px;color:var(--app-muted)}html[data-theme=dark] .enrollment-donut{background:radial-gradient(circle,var(--app-surface) 0 42%,transparent 43%),conic-gradient(#2672ef 0 44%,#12b76a 44% 73%,#fb8500 73% 91%,#8b5cf6 91% 97%,#ec4899 97%)}.reference-quick-actions .admin-tools{grid-template-columns:repeat(6,minmax(0,1fr))}.reference-quick-actions .admin-tools a{min-height:62px;display:grid;place-items:center;text-align:center;border-radius:10px}.events-panel .event-item{padding:13px 0;border-bottom:1px solid var(--app-border)}.events-panel .event-item:last-child{border:0}
@@ -1119,6 +1120,21 @@ if(loginUsername){
   loginUsername.placeholder='Enter your username';
   const loginLabel=loginUsername.closest('label');
   if(loginLabel && loginLabel.firstChild) loginLabel.firstChild.nodeValue='Username';
+  const portalField=document.querySelector('.auth-form-panel input[name="portal"]');
+  const brandPanel=document.querySelector('.auth-brand-panel');
+  if(portalField && brandPanel) brandPanel.classList.add('role-'+portalField.value);
+}
+const globalSearch=document.querySelector('.app-search');
+if(globalSearch){
+  const currentQuery=new URLSearchParams(window.location.search).get('q');
+  if(currentQuery) globalSearch.value=currentQuery;
+  globalSearch.addEventListener('keydown',function(event){
+    if(event.key==='Enter'){
+      event.preventDefault();
+      const query=globalSearch.value.trim();
+      if(query) window.location.assign('/search?q='+encodeURIComponent(query));
+    }
+  });
 }
 document.querySelectorAll('.terminal .remarks td').forEach(function(cell) {
   cell.innerHTML = cell.innerHTML.replace(/Fee Balance:\\s*([0-9,.]+)/g, 'Fee Balance: <span class="cedi">GH₵ $1</span>');
@@ -1502,6 +1518,63 @@ def register_routes(app: Flask) -> None:
             flash("No login slip is available. Create a user to generate one.", "error")
             return redirect(url_for("dashboard") if current_user() else "login")
         return render("""<main class="wrap"><section class="slip"><h2>Smart Schools SMS Login Slip</h2><p class="muted">Print this slip and give it to the user. The password is shown only now.</p><table><tr><th>Name</th><td>{{ slip.name }}</td></tr><tr><th>Role</th><td>{{ slip.role }}</td></tr><tr><th>Username</th><td><b>{{ slip.username }}</b></td></tr><tr><th>Temporary Password</th><td><b>{{ slip.password }}</b></td></tr><tr><th>Created</th><td>{{ slip.created_at }}</td></tr></table><p class="no-print"><button class="btn" onclick="window.print()">Print Login Slip</button> <a class="btn ghost" href="{{ url_for('dashboard') }}">Done</a></p></section></main>""", title="Login Slip", slip=slip)
+
+    @app.route("/search")
+    @login_required()
+    @school_required
+    def global_search():
+        user = current_user()
+        if user.role not in {
+            "school_admin", "teacher", "registrar",
+            "receptionist", "system_admin",
+        }:
+            abort(403)
+        query = request.args.get("q", "").strip()
+        students = []
+        staff = []
+        if query:
+            pattern = f"%{query[:100]}%"
+            student_query = db.session.query(
+                Student, User, ClassRoom
+            ).join(
+                User, Student.user_id == User.id
+            ).outerjoin(
+                ClassRoom, Student.class_id == ClassRoom.id
+            ).filter(
+                or_(
+                    User.full_name.ilike(pattern),
+                    User.username.ilike(pattern),
+                    Student.admission_no.ilike(pattern),
+                )
+            )
+            staff_query = User.query.filter(
+                User.role.in_([
+                    "school_admin", "teacher", "accountant",
+                    "registrar", "receptionist", "librarian",
+                ]),
+                or_(
+                    User.full_name.ilike(pattern),
+                    User.username.ilike(pattern),
+                    User.email.ilike(pattern),
+                ),
+            )
+            if user.role != "system_admin":
+                student_query = student_query.filter(
+                    Student.school_id == user.school_id)
+                staff_query = staff_query.filter(
+                    User.school_id == user.school_id)
+            if user.role == "teacher":
+                assigned_classes = teacher_class_ids(user)
+                student_query = student_query.filter(
+                    Student.class_id.in_(assigned_classes)
+                ) if assigned_classes else student_query.filter(False)
+                staff_query = staff_query.filter(User.id == user.id)
+            students = student_query.order_by(
+                User.full_name).limit(50).all()
+            staff = staff_query.order_by(User.full_name).limit(50).all()
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><header class="page-heading"><div><h1>Search Results</h1><p>Students and staff matching “{{ query }}”.</p></div><span class="period-chip">{{ (students|length) + (staff|length) }} results</span></header>{% if not query %}<article class="card empty-state"><b>Enter a name, username, admission number, or staff email</b><span>Use the search field in the top navigation and press Enter.</span></article>{% else %}<div class="grid cols-2"><article class="card"><h2>Students</h2>{% for student,account,class_group in students %}<a class="search-result-card" href="{{ url_for('students') }}"><span class="profile-avatar">{{ account.full_name[:1]|upper }}</span><span><b>{{ account.full_name }}</b><small>{{ student.admission_no }} · {{ class_group.name if class_group else 'No class' }}</small></span></a>{% else %}<div class="empty-state"><b>No students found</b></div>{% endfor %}</article><article class="card"><h2>Staff</h2>{% for account in staff %}<a class="search-result-card" href="{{ url_for('teachers') if user.role == 'school_admin' else url_for('dashboard') }}"><span class="profile-avatar">{{ account.full_name[:1]|upper }}</span><span><b>{{ account.full_name }}</b><small>{{ role_label(account.role) }} · {{ account.username }}</small></span></a>{% else %}<div class="empty-state"><b>No staff found</b></div>{% endfor %}</article></div>{% endif %}</section></div></main><style>.search-result-card{display:flex;align-items:center;gap:12px;padding:12px;border-bottom:1px solid var(--app-border)}.search-result-card:last-child{border:0}.search-result-card:hover{background:var(--app-surface-2)}.search-result-card span:last-child{display:grid;gap:3px}.search-result-card small{color:var(--app-muted)}</style>""",
+                      title="Search", query=query,
+                      students=students, staff=staff)
 
     @app.route("/dashboard")
     @login_required()
