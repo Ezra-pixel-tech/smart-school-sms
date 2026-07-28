@@ -16,6 +16,7 @@ from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from flask import Flask, Response, abort, flash, redirect, render_template_string, request, send_file, send_from_directory, session, url_for
+from flask_bcrypt import check_password_hash as check_bcrypt_password_hash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import Index, UniqueConstraint, event, func, or_, text
 from sqlalchemy.engine import Engine
@@ -42,6 +43,20 @@ LOGIN_AUDIENCES = {
 ALLOWED_ROLES = frozenset({"system_admin", "school_admin", "teacher", "student",
                           "parent", "accountant", "registrar", "librarian", "receptionist"})
 _LOGIN_ATTEMPTS: dict[str, list[datetime]] = {}
+
+
+def password_matches(stored_hash: str, password: str) -> bool:
+    """Verify current Werkzeug hashes and bcrypt hashes from older databases."""
+    stored_hash = stored_hash or ""
+    if stored_hash.startswith(("$2a$", "$2b$", "$2y$", "bcrypt:")):
+        try:
+            return check_bcrypt_password_hash(stored_hash, password)
+        except (TypeError, ValueError):
+            return False
+    try:
+        return check_password_hash(stored_hash, password)
+    except (TypeError, ValueError):
+        return False
 
 
 def normalize_database_url(url: str) -> str:
@@ -1441,11 +1456,18 @@ def register_routes(app: Flask) -> None:
                 flash(
                     "Too many login attempts. Please wait before trying again.", "error")
                 return render("""<main class="login-shell"><section class="card login-card"><h2>Login temporarily limited</h2><p class="muted">Please wait and try again later.</p><a class="btn ghost" href="{{ url_for('login', portal=portal) }}">Back</a></section></main>""", title="Login limited", portal=portal), 429
-            user = User.query.filter(
+            candidates = User.query.filter(
                 User.active.is_(True),
                 func.lower(User.username) == identity,
-            ).first()
-            if user and (not allowed_roles or user.role in allowed_roles) and check_password_hash(user.password_hash, request.form["password"]):
+            ).all()
+            matching_users = [
+                candidate for candidate in candidates
+                if (not allowed_roles or candidate.role in allowed_roles)
+                and password_matches(
+                    candidate.password_hash, request.form["password"])
+            ]
+            user = matching_users[0] if len(matching_users) == 1 else None
+            if user:
                 session.clear()
                 csrf_token()
                 session["user_id"] = user.id
@@ -1488,7 +1510,7 @@ def register_routes(app: Flask) -> None:
             current_password = request.form.get("current_password", "")
             new_password = request.form.get("new_password", "")
             confirm_password = request.form.get("confirm_password", "")
-            if not check_password_hash(user.password_hash, current_password):
+            if not password_matches(user.password_hash, current_password):
                 flash("Current password is incorrect.", "error")
             elif len(new_password) < 8:
                 flash("New password must be at least 8 characters.", "error")
