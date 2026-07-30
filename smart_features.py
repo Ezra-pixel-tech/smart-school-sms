@@ -19,8 +19,10 @@ from uuid import uuid4
 
 from flask import Response, abort, flash, redirect, render_template_string, request, session, url_for
 from sqlalchemy import Index
+from foundation import validate_password_strength
 
 _models = {}
+_RESET_ATTEMPTS: dict[str, list[datetime]] = {}
 
 
 def init_feature_models(db):
@@ -175,8 +177,11 @@ def _clean_row(row):
 
 
 def _validate_rows(rows, record_type, classes):
-    required = {"student": ("full_name", "username", "admission_no", "class"),
-                "teacher": ("full_name", "username")}[record_type]
+    required = {
+        "student": ("full_name", "username", "admission_no", "class"),
+        "teacher": ("full_name", "username"),
+        "parent": ("full_name", "username", "email"),
+    }[record_type]
     valid, errors = [], []
     seen_usernames, seen_admissions = set(), set()
     class_names = {item.name.strip().lower(): item.id for item in classes}
@@ -252,8 +257,38 @@ def register_feature_routes(app, ctx):
         portal = request.args.get("portal", "admin")
         if request.method == "POST":
             email = request.form.get("email", "").strip().lower()
+            school_slug = request.form.get("school_slug", "").strip().lower()
+            client_key = request.headers.get(
+                "X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+            now = datetime.utcnow()
+            window = max(60, int(os.getenv(
+                "PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS", "3600")))
+            attempts = _RESET_ATTEMPTS.setdefault(client_key, [])
+            attempts[:] = [
+                item for item in attempts
+                if (now - item).total_seconds() < window
+            ]
+            limit = max(1, int(os.getenv(
+                "PASSWORD_RESET_RATE_LIMIT_ATTEMPTS", "5")))
+            if len(attempts) >= limit:
+                abort(429)
+            attempts.append(now)
             admin_roles = {"system_admin", "school_admin", "accountant", "registrar", "librarian", "receptionist"}
-            user = User.query.filter(User.email.ilike(email), User.role.in_(admin_roles), User.active.is_(True)).first()
+            user_query = User.query.filter(
+                User.email.ilike(email),
+                User.role.in_(admin_roles),
+                User.active.is_(True),
+            )
+            if school_slug:
+                user_query = user_query.join(
+                    School, User.school_id == School.id).filter(
+                        School.slug.ilike(school_slug),
+                        School.status.in_(("active", "trial")),
+                        School.archived_at.is_(None),
+                    )
+            matches = user_query.limit(2).all()
+            # Never guess when the same email belongs to more than one tenant.
+            user = matches[0] if len(matches) == 1 else None
             if user:
                 PasswordResetToken.query.filter_by(user_id=user.id, used_at=None).update(
                     {"used_at": datetime.utcnow()}, synchronize_session=False)
@@ -273,7 +308,7 @@ def register_feature_routes(app, ctx):
                 except RuntimeError:
                     app.logger.exception("Password reset email delivery failed")
             flash("If that administrator email exists, a reset link has been sent.", "success")
-        body = """<main class="login-shell"><section class="card login-card"><h2>Reset administrator password</h2><p class="muted">Enter the email saved on your administrator account.</p>{% for category,message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}{{ field('Administrator Email','email','email',required=true) }}<button class="btn green">Send reset link</button></form><p><a class="btn ghost" href="{{ url_for('login',portal=portal) }}">Back to login</a></p></section></main>"""
+        body = """<main class="login-shell"><section class="card login-card"><h2>Reset administrator password</h2><p class="muted">Enter the email saved on your administrator account. Add the school slug if the same email is used at more than one school.</p>{% for category,message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}{{ field('Administrator Email','email','email',required=true) }}{{ field('School Slug (optional)','school_slug',placeholder='example-school') }}<button class="btn green">Send reset link</button></form><p><a class="btn ghost" href="{{ url_for('login',portal=portal) }}">Back to login</a></p></section></main>"""
         return render_page(body, title="Forgot Password", portal=portal)
 
     @app.route("/reset-password/<token>", methods=["GET", "POST"])
@@ -285,19 +320,22 @@ def register_feature_routes(app, ctx):
         if request.method == "POST":
             password = request.form.get("password", "")
             confirmation = request.form.get("confirmation", "")
-            if len(password) < 8:
-                flash("Use at least 8 characters.", "error")
-            elif password != confirmation:
+            if password != confirmation:
                 flash("The passwords do not match.", "error")
             else:
-                user = db.session.get(User, item.user_id)
-                user.password_hash = generate_password_hash(password)
-                user.must_change_password = False
-                item.used_at = datetime.utcnow()
-                db.session.commit()
-                session.clear()
-                flash("Your password has been changed. You can now sign in.", "success")
-                return redirect(url_for("login", portal="admin"))
+                try:
+                    validate_password_strength(password)
+                    user = db.session.get(User, item.user_id)
+                    user.password_hash = generate_password_hash(password)
+                    user.must_change_password = False
+                    user.session_version = (user.session_version or 1) + 1
+                    item.used_at = datetime.utcnow()
+                    db.session.commit()
+                    session.clear()
+                    flash("Your password has been changed. You can now sign in.", "success")
+                    return redirect(url_for("login", portal="admin"))
+                except ValueError as exc:
+                    flash(str(exc), "error")
         body = """<main class="login-shell"><section class="card login-card"><h2>Choose a new password</h2>{% for category,message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}{{ field('New Password','password','password',required=true) }}{{ field('Confirm Password','confirmation','password',required=true) }}<button class="btn green">Change password</button></form></section></main>"""
         return render_page(body, title="Choose New Password")
 
@@ -406,13 +444,19 @@ def register_feature_routes(app, ctx):
         user, school = current_user(), current_school()
         if request.method == "POST":
             record_type = request.form.get("record_type", "student")
-            if record_type not in {"student", "teacher"}:
+            if record_type not in {"student", "teacher", "parent"}:
                 abort(400)
             upload = request.files.get("file")
             try:
                 rows = _rows_from_upload(upload)
                 valid, errors = _validate_rows(rows, record_type,
                                                 ClassRoom.query.filter_by(school_id=school.id).all())
+                for row in valid:
+                    supplied_password = row.pop("password", "")
+                    if supplied_password:
+                        validate_password_strength(supplied_password)
+                        row["_password_hash"] = generate_password_hash(
+                            supplied_password)
                 job = BulkImportJob(school_id=school.id, created_by=user.id, record_type=record_type,
                                     filename=(upload.filename or "import")[:260],
                                     staged_json=json.dumps({"valid": valid, "errors": errors}))
@@ -422,7 +466,7 @@ def register_feature_routes(app, ctx):
             except ValueError as exc:
                 flash(str(exc), "error")
         recent = BulkImportJob.query.filter_by(school_id=school.id).order_by(BulkImportJob.created_at.desc()).limit(10).all()
-        body = """<main class="wrap"><div class="layout">""" + ctx["SIDEBAR"] + """<section class="grid"><article class="card"><h2>Import old school records</h2><p>Upload CSV or Excel (.xlsx), preview validation results, then choose how duplicates are handled.</p>{% for category,message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" enctype="multipart/form-data">{{ csrf() }}<label>Record type<select name="record_type"><option value="student">Students</option><option value="teacher">Teachers</option></select></label><label>File<input type="file" name="file" accept=".csv,.xlsx" required></label><button class="btn green">Validate and preview</button></form><p class="muted">Student columns: full_name, username, admission_no, class, email, phone, guardian_name, guardian_email, guardian_phone, password. Teacher columns: full_name, username, email, phone, password.</p></article><article class="card"><h3>Recent imports</h3><table><tr><th>File</th><th>Type</th><th>Status</th><th>Report</th></tr>{% for item in recent %}<tr><td>{{ item.filename }}</td><td>{{ item.record_type }}</td><td>{{ item.status }}</td><td><a href="{{ url_for('bulk_import_preview',job_id=item.id) }}">Open</a></td></tr>{% endfor %}</table></article></section></div></main>"""
+        body = """<main class="wrap"><div class="layout">""" + ctx["SIDEBAR"] + """<section class="grid"><article class="card"><h2>Import old school records</h2><p>Upload CSV or Excel (.xlsx), preview validation results, then choose how duplicates are handled.</p>{% for category,message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" enctype="multipart/form-data">{{ csrf() }}<label>Record type<select name="record_type"><option value="student">Students</option><option value="teacher">Teachers</option><option value="parent">Parents</option></select></label><label>File<input type="file" name="file" accept=".csv,.xlsx" required></label><button class="btn green">Validate and preview</button></form><p class="muted">Student columns: full_name, username, admission_no, class, email, phone, guardian_name, guardian_email, guardian_phone, password. Teacher and parent columns: full_name, username, email, phone, password.</p></article><article class="card"><h3>Recent imports</h3><table><tr><th>File</th><th>Type</th><th>Status</th><th>Report</th></tr>{% for item in recent %}<tr><td>{{ item.filename }}</td><td>{{ item.record_type }}</td><td>{{ item.status }}</td><td><a href="{{ url_for('bulk_import_preview',job_id=item.id) }}">Open</a></td></tr>{% endfor %}</table></article></section></div></main>"""
         return render_page(body, title="Bulk Import", recent=recent)
 
     @app.route("/admin/import/<int:job_id>", methods=["GET", "POST"])
@@ -449,19 +493,21 @@ def register_feature_routes(app, ctx):
                     if duplicate and mode == "skip":
                         skipped += 1
                         continue
-                    password = row.get("password") or generate_temporary_password()
-                    if job.record_type == "teacher":
+                    password_hash = row.get("_password_hash") or generate_password_hash(
+                        generate_temporary_password())
+                    if job.record_type in {"teacher", "parent"}:
+                        target_role = job.record_type
                         account = existing
                         if account:
-                            if account.role != "teacher":
+                            if account.role != target_role:
                                 raise ValueError("username belongs to another role")
                             account.full_name = row["full_name"]
                             account.email, account.phone = row.get("email", ""), row.get("phone", "")
                             updated += 1
                         else:
-                            db.session.add(User(school_id=school.id, role="teacher", full_name=row["full_name"],
+                            db.session.add(User(school_id=school.id, role=target_role, full_name=row["full_name"],
                                                 username=username, email=row.get("email", ""), phone=row.get("phone", ""),
-                                                password_hash=generate_password_hash(password), must_change_password=True))
+                                                password_hash=password_hash, must_change_password=True))
                             created += 1
                     else:
                         student_record = admission_existing
@@ -480,7 +526,7 @@ def register_feature_routes(app, ctx):
                         else:
                             account = User(school_id=school.id, role="student", full_name=row["full_name"],
                                            username=username, email=row.get("email", ""), phone=row.get("phone", ""),
-                                           password_hash=generate_password_hash(password), must_change_password=True)
+                                           password_hash=password_hash, must_change_password=True)
                             db.session.add(account)
                             db.session.flush()
                             db.session.add(Student(school_id=school.id, user_id=account.id,

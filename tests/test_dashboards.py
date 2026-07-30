@@ -21,6 +21,7 @@ class DashboardTests(unittest.TestCase):
     def setUpClass(cls):
         cls.context = run.app.app_context()
         cls.context.push()
+        run.db.create_all()
         cls.school = run.School(name="Dashboard Test School", academic_year="2026/2027", term="Term 1", onboarded=True)
         run.db.session.add(cls.school)
         run.db.session.flush()
@@ -58,6 +59,7 @@ class DashboardTests(unittest.TestCase):
             with self.subTest(role=role):
                 with client.session_transaction() as session:
                     session["user_id"] = account.id
+                    session["session_version"] = account.session_version
                     session["_csrf"] = "test-csrf"
                 response = client.get("/dashboard")
                 self.assertEqual(response.status_code, 200)
@@ -165,6 +167,7 @@ class DashboardTests(unittest.TestCase):
         client = run.app.test_client()
         with client.session_transaction() as session:
             session["user_id"] = self.users["school_admin"].id
+            session["session_version"] = self.users["school_admin"].session_version
             session["_csrf"] = "test-csrf"
         html = client.get("/dashboard").get_data(as_text=True)
         self.assertIn("Import Excel", html)
@@ -175,6 +178,7 @@ class DashboardTests(unittest.TestCase):
         client = run.app.test_client()
         with client.session_transaction() as session:
             session["user_id"] = self.users["school_admin"].id
+            session["session_version"] = self.users["school_admin"].session_version
             session["_csrf"] = "test-csrf"
         response = client.get("/admin/export.xlsx")
         self.assertEqual(response.status_code, 200)
@@ -193,6 +197,7 @@ class DashboardTests(unittest.TestCase):
             with self.subTest(role=role):
                 with client.session_transaction() as session:
                     session["user_id"] = self.users[role].id
+                    session["session_version"] = self.users[role].session_version
                     session["_csrf"] = "test-csrf"
                 response = client.get("/students")
                 self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
@@ -201,6 +206,7 @@ class DashboardTests(unittest.TestCase):
         client = run.app.test_client()
         with client.session_transaction() as session:
             session["user_id"] = self.users["school_admin"].id
+            session["session_version"] = self.users["school_admin"].session_version
             session["_csrf"] = "test-csrf"
         student_results = client.get("/search?q=Student")
         self.assertEqual(student_results.status_code, 200)
@@ -216,6 +222,17 @@ class DashboardTests(unittest.TestCase):
         run.db.session.flush()
         student.class_id = class_group.id
         student.promotion_note = "Promoted from JHS 1 to JHS 2"
+        subject = run.Subject(
+            school_id=self.school.id, name="Integrated Science",
+            code="SCI")
+        run.db.session.add(subject)
+        run.db.session.flush()
+        run.db.session.add(run.Score(
+            school_id=self.school.id, student_id=student.id,
+            subject_id=subject.id, class_score=35, exam_score=50,
+            term=self.school.term, academic_year=self.school.academic_year,
+            workflow_status="published", published_at=run.datetime.utcnow(),
+        ))
         run.db.session.commit()
         Payment = run.app.feature_models["StudentReportPayment"]
         run.db.session.add(Payment(
@@ -227,6 +244,7 @@ class DashboardTests(unittest.TestCase):
         client = run.app.test_client()
         with client.session_transaction() as session:
             session["user_id"] = self.users["student"].id
+            session["session_version"] = self.users["student"].session_version
             session["_csrf"] = "test-csrf"
         html = client.get("/my-results").get_data(as_text=True)
         self.assertIn("JHS 2", html)
@@ -252,6 +270,7 @@ class DashboardTests(unittest.TestCase):
         client = run.app.test_client()
         with client.session_transaction() as session:
             session["user_id"] = self.users["school_admin"].id
+            session["session_version"] = self.users["school_admin"].session_version
             session["_csrf"] = "test-csrf"
         listing = client.get("/report-cards")
         self.assertEqual(listing.status_code, 200)
@@ -265,6 +284,56 @@ class DashboardTests(unittest.TestCase):
             data={"_csrf": "test-csrf"}, follow_redirects=True)
         self.assertEqual(published.status_code, 200)
 
+    def test_published_score_requires_reason_and_records_correction(self):
+        subject = run.Subject(
+            school_id=self.school.id, name="Correction Audit Subject",
+            code="CAS")
+        run.db.session.add(subject)
+        run.db.session.flush()
+        score = run.Score(
+            school_id=self.school.id, student_id=self.student.id,
+            subject_id=subject.id, class_score=20, exam_score=50,
+            term=self.school.term, academic_year=self.school.academic_year,
+            workflow_status="published", published_at=run.datetime.utcnow(),
+            locked_at=run.datetime.utcnow(), revision=1,
+        )
+        run.db.session.add(score)
+        run.db.session.commit()
+        client = run.app.test_client()
+        admin = self.users["school_admin"]
+        with client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = admin.session_version
+            session["_csrf"] = "test-csrf"
+        payload = {
+            "_csrf": "test-csrf",
+            "student_id": self.student.id,
+            "subject_id": subject.id,
+            "class_score": "25",
+            "exam_score": "55",
+            "term": self.school.term,
+            "academic_year": self.school.academic_year,
+        }
+        rejected = client.post("/scores", data=payload, follow_redirects=True)
+        self.assertIn(
+            "correction reason is required",
+            rejected.get_data(as_text=True).lower())
+        run.db.session.refresh(score)
+        self.assertEqual(score.class_score, 20)
+
+        payload["correction_reason"] = "Corrected verified entry"
+        accepted = client.post("/scores", data=payload, follow_redirects=True)
+        self.assertIn("Score saved", accepted.get_data(as_text=True))
+        run.db.session.refresh(score)
+        self.assertEqual(score.workflow_status, "draft")
+        self.assertIsNone(score.locked_at)
+        self.assertEqual(score.revision, 2)
+        ResultChange = run.app.platform_models["ResultChange"]
+        change = ResultChange.query.filter_by(score_id=score.id).one()
+        self.assertEqual(change.reason, "Corrected verified entry")
+        self.assertEqual(change.old_class_score, 20)
+        self.assertEqual(change.new_class_score, 25)
+
     def test_student_report_is_locked_without_payment(self):
         Payment = run.app.feature_models["StudentReportPayment"]
         Payment.query.filter_by(user_id=self.users["student"].id).delete()
@@ -272,6 +341,7 @@ class DashboardTests(unittest.TestCase):
         client = run.app.test_client()
         with client.session_transaction() as session:
             session["user_id"] = self.users["student"].id
+            session["session_version"] = self.users["student"].session_version
             session["_csrf"] = "test-csrf"
         response = client.get("/my-results")
         self.assertEqual(response.status_code, 302)
@@ -297,6 +367,7 @@ class DashboardTests(unittest.TestCase):
         client = run.app.test_client()
         with client.session_transaction() as session:
             session["user_id"] = self.parent.id
+            session["session_version"] = self.parent.session_version
             session["_csrf"] = "test-csrf"
         response = client.get(f"/parent/report/{self.student.id}")
         self.assertEqual(response.status_code, 302)
@@ -341,6 +412,116 @@ class DashboardTests(unittest.TestCase):
                                content_type="application/json",
                                headers={"x-paystack-signature": signature})
         self.assertEqual(response.status_code, 200)
+
+    def test_health_endpoint_checks_database_without_authentication(self):
+        response = run.app.test_client().get("/health")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["database"], "ok")
+
+    def test_platform_owner_portal_is_restricted(self):
+        owner_client = run.app.test_client()
+        owner = self.users["system_admin"]
+        with owner_client.session_transaction() as session:
+            session["user_id"] = owner.id
+            session["session_version"] = owner.session_version
+            session["_csrf"] = "test-csrf"
+        response = owner_client.get("/owner")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Platform Owner", response.get_data(as_text=True))
+
+        school_client = run.app.test_client()
+        admin = self.users["school_admin"]
+        with school_client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = admin.session_version
+            session["_csrf"] = "test-csrf"
+        self.assertNotEqual(school_client.get("/owner").status_code, 200)
+
+    def test_logout_all_devices_invalidates_existing_session(self):
+        client = run.app.test_client()
+        admin = self.users["school_admin"]
+        original_version = admin.session_version
+        with client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = original_version
+            session["_csrf"] = "test-csrf"
+        response = client.post(
+            "/logout-all", data={"_csrf": "test-csrf"})
+        self.assertEqual(response.status_code, 302)
+        run.db.session.refresh(admin)
+        self.assertEqual(admin.session_version, original_version + 1)
+        self.assertEqual(client.get("/dashboard").status_code, 302)
+
+    def test_cross_school_report_access_is_denied(self):
+        other_school = run.School(
+            name="Isolated School", slug="isolated-school",
+            academic_year=self.school.academic_year, term=self.school.term,
+            onboarded=True)
+        run.db.session.add(other_school)
+        run.db.session.flush()
+        other_user = run.User(
+            school_id=other_school.id, role="student",
+            full_name="Other Student", username="other_student",
+            password_hash=generate_password_hash("Other@Test123"),
+            must_change_password=False)
+        run.db.session.add(other_user)
+        run.db.session.flush()
+        other_student = run.Student(
+            school_id=other_school.id, user_id=other_user.id,
+            admission_no="OTHER001")
+        run.db.session.add(other_student)
+        run.db.session.commit()
+
+        client = run.app.test_client()
+        admin = self.users["school_admin"]
+        with client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = admin.session_version
+            session["_csrf"] = "test-csrf"
+        response = client.get(
+            f"/report-cards/{other_student.id}/preview")
+        self.assertEqual(response.status_code, 404)
+
+    def test_suspended_school_blocks_login(self):
+        account = self.users["school_admin"]
+        self.school.status = "suspended"
+        run.db.session.commit()
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["_csrf"] = "test-csrf"
+        response = client.post("/login?portal=admin", data={
+            "_csrf": "test-csrf", "portal": "admin",
+            "username": account.username, "password": "Test@12345",
+        }, follow_redirects=True)
+        self.assertIn(
+            "school portal is currently unavailable",
+            response.get_data(as_text=True).lower())
+        self.school.status = "active"
+        run.db.session.commit()
+
+    def test_import_staging_does_not_store_plaintext_password(self):
+        client = run.app.test_client()
+        admin = self.users["school_admin"]
+        with client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = admin.session_version
+            session["_csrf"] = "test-csrf"
+        raw_password = "StrongImport123"
+        csv_data = (
+            "full_name,username,email,password\n"
+            f"Imported Parent,imported_parent,parent2@example.com,{raw_password}\n"
+        ).encode()
+        response = client.post("/admin/import", data={
+            "_csrf": "test-csrf", "record_type": "parent",
+            "file": (BytesIO(csv_data), "parents.csv"),
+        }, content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 302)
+        Job = run.app.feature_models["BulkImportJob"]
+        job = Job.query.order_by(Job.id.desc()).first()
+        self.assertNotIn(raw_password, job.staged_json)
+        self.assertIn("_password_hash", job.staged_json)
 
 
 if __name__ == "__main__":

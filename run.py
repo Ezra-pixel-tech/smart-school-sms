@@ -25,6 +25,16 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 from config import Config
+from foundation import (
+    clean_email,
+    clean_slug,
+    clean_text,
+    configure_logging,
+    register_error_handlers,
+    register_health_routes,
+    validate_password_strength,
+    validate_environment,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -88,6 +98,12 @@ def create_app() -> Flask:
     register_routes(app)
     from smart_features import register_feature_routes
     register_feature_routes(app, globals())
+    from platform_features import register_platform_features
+    register_platform_features(app, globals())
+    configure_logging(app)
+    register_error_handlers(app)
+    register_health_routes(app, db)
+    validate_environment(app)
     return app
 
 
@@ -112,6 +128,28 @@ class School(db.Model):
     onboarded = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(
         db.DateTime, default=datetime.utcnow, nullable=False)
+    slug = db.Column(db.String(100), nullable=True, index=True)
+    short_name = db.Column(db.String(80), default="")
+    status = db.Column(db.String(30), default="active", nullable=False, index=True)
+    archived_at = db.Column(db.DateTime)
+    trial_ends_at = db.Column(db.DateTime)
+    favicon = db.Column(db.String(260), default="")
+    primary_color = db.Column(db.String(20), default="#0b2b5c")
+    secondary_color = db.Column(db.String(20), default="#125edb")
+    accent_color = db.Column(db.String(20), default="#079455")
+    region = db.Column(db.String(100), default="")
+    town = db.Column(db.String(100), default="")
+    website = db.Column(db.String(200), default="")
+    stamp = db.Column(db.String(260), default="")
+    report_card_design = db.Column(db.String(40), default="classic")
+    receipt_design = db.Column(db.String(40), default="classic")
+    login_background = db.Column(db.String(260), default="")
+    welcome_message = db.Column(db.String(300), default="")
+    timezone = db.Column(db.String(80), default="Africa/Accra")
+    currency = db.Column(db.String(10), default="GHS")
+    date_format = db.Column(db.String(30), default="DD MMM YYYY")
+    onboarding_step = db.Column(db.Integer, default=1, nullable=False)
+    onboarding_data = db.Column(db.Text, default="{}")
 
 
 class User(db.Model):
@@ -129,6 +167,12 @@ class User(db.Model):
     must_change_password = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(
         db.DateTime, default=datetime.utcnow, nullable=False)
+    session_version = db.Column(db.Integer, default=1, nullable=False)
+    last_login_at = db.Column(db.DateTime)
+    disabled_reason = db.Column(db.String(260), default="")
+    staff_id = db.Column(db.String(80), default="")
+    employment_status = db.Column(db.String(30), default="active")
+    archived_at = db.Column(db.DateTime)
     __table_args__ = (UniqueConstraint(
         "school_id", "username", name="uq_user_school_username"),)
 
@@ -194,6 +238,9 @@ class Student(db.Model):
     guardian_email = db.Column(db.String(160), default="")
     promotion_note = db.Column(db.String(260), default="")
     promoted_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(30), default="active", index=True)
+    programme_id = db.Column(db.Integer, nullable=True, index=True)
+    photo = db.Column(db.String(260), default="")
     __table_args__ = (UniqueConstraint(
         "school_id", "admission_no", name="uq_student_school_admission"),)
 
@@ -256,6 +303,14 @@ class Score(db.Model):
         "users.id", ondelete="SET NULL"), nullable=True)
     updated_at = db.Column(
         db.DateTime, default=datetime.utcnow, nullable=False)
+    workflow_status = db.Column(
+        db.String(30), default="draft", nullable=False, index=True)
+    submitted_at = db.Column(db.DateTime)
+    approved_at = db.Column(db.DateTime)
+    published_at = db.Column(db.DateTime, index=True)
+    approved_by = db.Column(db.Integer, nullable=True)
+    locked_at = db.Column(db.DateTime)
+    revision = db.Column(db.Integer, default=1, nullable=False)
     __table_args__ = (UniqueConstraint("student_id", "subject_id",
                       "term", "academic_year", name="uq_score_period"),)
 
@@ -271,6 +326,10 @@ class Attendance(db.Model):
     total_days = db.Column(db.Integer, default=0)
     term = db.Column(db.String(40), default="")
     academic_year = db.Column(db.String(40), default="")
+    status = db.Column(db.String(20), default="present", index=True)
+    attendance_date = db.Column(db.Date)
+    remarks = db.Column(db.String(260), default="")
+    recorded_by = db.Column(db.Integer, nullable=True)
     __table_args__ = (UniqueConstraint("student_id", "term",
                       "academic_year", name="uq_attendance_period"),)
 
@@ -327,6 +386,9 @@ class Announcement(db.Model):
         "users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(
         db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    scheduled_for = db.Column(db.DateTime)
+    expires_at = db.Column(db.DateTime)
+    class_id = db.Column(db.Integer, nullable=True, index=True)
 
 
 class Timetable(db.Model):
@@ -432,8 +494,10 @@ def set_database_pragmas(dbapi_connection, _):
 
 
 def init_db() -> None:
-    db.create_all()
-    ensure_compatibility_migrations()
+    from migrations import run_migrations
+    run_migrations(
+        db, db.create_all, legacy_migrations=ensure_compatibility_migrations
+    )
     bootstrap_password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
     if bootstrap_password and not User.query.filter_by(role="system_admin", username="admin").first():
         admin = User(
@@ -608,7 +672,13 @@ def ensure_compatibility_migrations() -> None:
 
 def current_user():
     uid = session.get("user_id")
-    return db.session.get(User, uid) if uid else None
+    user = db.session.get(User, uid) if uid else None
+    if not user or not user.active or user.archived_at:
+        return None
+    if session.get("session_version") != (user.session_version or 1):
+        session.clear()
+        return None
+    return user
 
 
 def current_school():
@@ -655,6 +725,11 @@ def safe_int(value, default=0):
 
 
 def audience_recipients(school_id: int, audience: str, channel: str, manual_recipient: str = "") -> list[str]:
+    audience = {
+        "student": "students",
+        "teacher": "teachers",
+        "parent": "parents",
+    }.get(audience, audience)
     if manual_recipient.strip():
         return list(dict.fromkeys(value.strip() for value in manual_recipient.split(",") if value.strip()))
 
@@ -704,6 +779,18 @@ def deliver_communication(item: Communication) -> str:
         if item.channel == "sms" and sms_api_url:
             from urllib.request import Request, urlopen
 
+            parsed_sms_url = urlparse(sms_api_url)
+            allowed_hosts = {
+                host.strip().lower() for host in
+                os.getenv("SMS_ALLOWED_HOSTS", "sms.nalosolutions.com").split(",")
+                if host.strip()
+            }
+            if (
+                parsed_sms_url.scheme != "https"
+                or not parsed_sms_url.hostname
+                or parsed_sms_url.hostname.lower() not in allowed_hosts
+            ):
+                return "failed: SMS endpoint not allowed"
             sms_sender_id = school.sms_sender_id if school and school.sms_sender_id else os.getenv(
                 "NALO_SMS_SENDER_ID", os.getenv("SMS_SENDER_ID", "School"))
             if "nalosolutions.com" in sms_api_url:
@@ -721,7 +808,12 @@ def deliver_communication(item: Communication) -> str:
 
                 payload = urlencode(
                     {"to": item.recipient, "message": item.message}).encode()
-                urlopen(sms_api_url, data=payload, timeout=12).read()
+                headers = {}
+                api_key = school.sms_api_key if school else ""
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                urlopen(Request(sms_api_url, data=payload, headers=headers),
+                        timeout=12).read()
             return "sent"
     except Exception as exc:
         return f"failed: {exc.__class__.__name__}"
@@ -764,6 +856,12 @@ def login_required(*roles):
             user = current_user()
             if not user:
                 return redirect(url_for("login"))
+            school = current_school()
+            if user.role != "system_admin" and (
+                not school or school.archived_at or
+                school.status in {"suspended", "archived"}
+            ):
+                abort(403)
             if user.must_change_password and request.endpoint not in {"change_password", "logout", "uploads"}:
                 flash(
                     "Please change your temporary password before continuing.", "error")
@@ -867,15 +965,23 @@ def verify_report_payment(payment: ParentReportPayment) -> bool:
     return valid
 
 
-def build_report_context(student: Student, school: School, report_user: User) -> dict:
-    rows = db.session.query(Score, Subject).join(
+def build_report_context(
+        student: Student, school: School, report_user: User,
+        *, published_only: bool = False) -> dict:
+    score_query = db.session.query(Score, Subject).join(
         Subject, Score.subject_id == Subject.id
     ).filter(
         Score.school_id == school.id,
         Score.student_id == student.id,
         Score.term == school.term,
         Score.academic_year == school.academic_year,
-    ).order_by(Subject.name).all()
+    )
+    if published_only:
+        score_query = score_query.filter(
+            Score.workflow_status == "published",
+            Score.published_at.is_not(None),
+        )
+    rows = score_query.order_by(Subject.name).all()
     attendance = Attendance.query.filter_by(
         school_id=school.id, student_id=student.id,
         term=school.term, academic_year=school.academic_year).first()
@@ -889,9 +995,15 @@ def build_report_context(student: Student, school: School, report_user: User) ->
         academic_year=school.academic_year).first()
     term_summary = []
     for term_name in ["Term 1", "Term 2", "Term 3"]:
-        term_scores = Score.query.filter_by(
+        term_query = Score.query.filter_by(
             student_id=student.id, term=term_name,
-            academic_year=school.academic_year).all()
+            academic_year=school.academic_year)
+        if published_only:
+            term_query = term_query.filter(
+                Score.workflow_status == "published",
+                Score.published_at.is_not(None),
+            )
+        term_scores = term_query.all()
         term_total = round(sum(sc.class_score + sc.exam_score for sc in term_scores), 2)
         term_summary.append({"total": term_total, "average": round(
             term_total / len(term_scores), 2) if term_scores else 0})
@@ -1087,7 +1199,7 @@ html[data-theme="dark"] th,html[data-theme="dark"] .table-pagination{background:
 /* Screenshot-faithful dashboard composition */
 .reference-dashboard{gap:24px}.reference-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:24px}.reference-heading h1{margin:0 0 6px;font-size:25px;letter-spacing:-.035em}.reference-heading p{margin:0;color:var(--app-muted)}.reference-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.reference-kpis .kpi-card{display:grid;grid-template-columns:64px 1fr 34px;align-items:center;padding:22px 18px}.reference-kpis .kpi-icon{width:58px;height:58px;font-size:12px}.reference-kpis .trend-box{display:grid;place-items:center;width:32px;height:32px;border:1px solid #bfdbfe;border-radius:8px;color:#0757d9;background:#eff6ff}.reference-kpis .kpi-2 .trend-box{color:#0a9b54;background:#effcf4;border-color:#bbf7d0}.reference-kpis .kpi-3 .trend-box{color:#e97800;background:#fff8ec;border-color:#fed7aa}.reference-kpis .kpi-4 .trend-box{color:#db2777;background:#fff1f6;border-color:#fbcfe8}.reference-dashboard-grid{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:18px}.reference-dashboard-grid>.card{min-height:310px}.reference-bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.reference-line-chart{display:grid;grid-template-columns:45px 1fr;grid-template-rows:220px auto;gap:0 10px;padding:16px 0 0}.chart-axis{display:flex;flex-direction:column;justify-content:space-between;color:var(--app-muted);font-size:11px}.chart-plot{position:relative;border-left:1px solid var(--app-border);border-bottom:1px solid var(--app-border);background:repeating-linear-gradient(to bottom,transparent 0,transparent 54px,var(--app-border) 55px)}.chart-plot svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}.chart-plot polyline{fill:none;stroke:#1261e8;stroke-width:2.2;vector-effect:non-scaling-stroke}.chart-plot i{position:absolute;left:var(--x);top:var(--y);width:8px;height:8px;margin:-4px;border:2px solid #fff;border-radius:50%;background:#1261e8;box-shadow:0 0 0 1px #1261e8}.chart-rate{grid-column:2;text-align:center;margin-top:12px;color:#0757d9;font-weight:750;font-size:12px}.enrollment-visual{display:grid;grid-template-columns:160px 1fr;align-items:center;gap:22px;margin-top:36px}.enrollment-donut{display:grid;place-items:center;align-content:center;width:150px;height:150px;border-radius:50%;background:radial-gradient(circle,#fff 0 42%,transparent 43%),conic-gradient(#2672ef 0 44%,#12b76a 44% 73%,#fb8500 73% 91%,#8b5cf6 91% 97%,#ec4899 97%)}.enrollment-donut strong{font-size:22px}.enrollment-donut span{font-size:11px;color:var(--app-muted)}html[data-theme=dark] .enrollment-donut{background:radial-gradient(circle,var(--app-surface) 0 42%,transparent 43%),conic-gradient(#2672ef 0 44%,#12b76a 44% 73%,#fb8500 73% 91%,#8b5cf6 91% 97%,#ec4899 97%)}.reference-quick-actions .admin-tools{grid-template-columns:repeat(6,minmax(0,1fr))}.reference-quick-actions .admin-tools a{min-height:62px;display:grid;place-items:center;text-align:center;border-radius:10px}.events-panel .event-item{padding:13px 0;border-bottom:1px solid var(--app-border)}.events-panel .event-item:last-child{border:0}
 @media(max-width:1200px){.reference-kpis{grid-template-columns:repeat(2,1fr)}.reference-dashboard-grid{grid-template-columns:1fr 1fr}.reference-dashboard-grid>:first-child{grid-column:1/-1}.reference-quick-actions .admin-tools{grid-template-columns:repeat(3,1fr)}}@media(max-width:760px){.reference-heading{flex-direction:column}.reference-kpis,.reference-dashboard-grid,.reference-bottom-grid{grid-template-columns:1fr}.reference-dashboard-grid>:first-child{grid-column:auto}.enrollment-visual{grid-template-columns:1fr;justify-items:center}.reference-quick-actions .admin-tools{grid-template-columns:1fr 1fr}}
-</style></head><body>
+</style></head><body style="{{ school_theme_style|default('') }}">
 <header class="topbar no-print"><div class="wrap nav"><div style="display:flex;align-items:center;gap:10px">{% if user %}<button class="icon-button" id="sidebar-toggle" type="button" aria-label="Toggle sidebar" aria-expanded="true">☰</button>{% endif %}<a class="brand" href="{{ url_for('index') }}">{% if school and school.crest %}<img class="crest" src="{{ url_for('uploads', filename=school.crest) }}" alt="crest">{% else %}<span class="crest-fallback">SMS</span>{% endif %}<span><span style="display:block">Smart School SMS</span><small>{{ school.name if school else 'School Management System' }}</small></span></a></div>{% if user %}<input class="app-search" type="search" placeholder="Search students, staff, classes..." aria-label="Search Smart School SMS"><div class="nav-tools"><button class="icon-button" id="theme-toggle" type="button" aria-label="Change colour theme">◐</button><a class="icon-button" href="{{ url_for('announcements') if user.role not in ['system_admin','parent'] else url_for('dashboard') }}" aria-label="Notifications">♢</a><a class="profile-chip" href="{{ url_for('change_password') }}"><span class="profile-avatar">{{ user.full_name[:1]|upper }}</span><span>{{ user.full_name }}</span></a><a class="btn ghost" href="{{ url_for('logout') }}">Logout</a></div>{% else %}<nav class="navlinks"><a href="{{ url_for('index') }}">Home</a><a href="{{ url_for('index') }}#features">Features</a><a href="{{ url_for('index') }}#features">Modules</a><a href="{{ url_for('register_school') }}">Pricing</a><a href="{{ url_for('index') }}#about">About Us</a><a href="{{ url_for('index') }}#contact">Contact</a><a href="{{ url_for('login') }}">Login</a><button class="icon-button" id="theme-toggle" type="button" aria-label="Change colour theme">◐</button><a class="btn green" href="{{ url_for('register_school') }}">Get Started</a></nav>{% endif %}</div></header>
 {% block body %}{% endblock %}<script>
 (function(){
@@ -1423,30 +1535,59 @@ def register_routes(app: Flask) -> None:
     @app.route("/register-school", methods=["GET", "POST"])
     def register_school():
         if request.method == "POST":
-            school = School(name=request.form["school_name"].strip())
-            db.session.add(school)
-            db.session.flush()
-            admin = User(school_id=school.id, role="school_admin", full_name=request.form["admin_name"].strip(), username=request.form["username"].strip().lower(
-            ), password_hash=generate_password_hash(request.form["password"]), email=request.form.get("email", ""), phone=request.form.get("phone", ""), must_change_password=True)
-            db.session.add(admin)
             try:
+                password = request.form["password"]
+                validate_password_strength(password)
+                school_name = clean_text(
+                    request.form["school_name"], maximum=180,
+                    required=True, field="School name")
+                slug = clean_slug(request.form.get("slug") or school_name)
+                if School.query.filter(func.lower(School.slug) == slug).first():
+                    raise ValueError("That school portal address is already in use.")
+                school = School(
+                    name=school_name, slug=slug, status="trial",
+                    trial_ends_at=datetime.utcnow() + timedelta(days=30))
+                db.session.add(school)
+                db.session.flush()
+                admin = User(
+                    school_id=school.id, role="school_admin",
+                    full_name=clean_text(
+                        request.form["admin_name"], maximum=160,
+                        required=True, field="Administrator name"),
+                    username=clean_text(
+                        request.form["username"], maximum=100,
+                        required=True, field="Username").lower(),
+                    password_hash=generate_password_hash(password),
+                    email=clean_email(request.form.get("email")),
+                    phone=clean_text(request.form.get("phone"), maximum=80),
+                    must_change_password=True,
+                )
+                db.session.add(admin)
                 db.session.commit()
-                create_login_slip(admin, request.form["password"])
+                create_login_slip(admin, password)
                 flash(
                     "School account created. Print the login slip and complete setup.", "success")
                 return redirect(url_for("login_slip"))
+            except ValueError as exc:
+                db.session.rollback()
+                flash(str(exc), "error")
             except Exception:
                 db.session.rollback()
-                flash(
-                    "That school admin username already exists for this school.", "error")
-        return render("""<main class="login-shell"><section class="card login-card"><h2>Register a School</h2><p class="muted">Create the first school admin account.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}{{ field('School Name','school_name', required=true) }}{{ field('Administrator Name','admin_name', required=true) }}{{ field('Admin Username','username', required=true) }}{{ field('Temporary Password','password','password', required=true) }}{{ field('Email','email','email') }}{{ field('Phone','phone') }}<button class="btn">Create School</button></form></section></main>""", title="Register School")
+                app.logger.exception("School registration failed")
+                flash("The school account could not be created.", "error")
+        return render("""<main class="login-shell"><section class="card login-card"><h2>Register a School</h2><p class="muted">Create the first school admin account.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}{{ field('School Name','school_name', required=true) }}{{ field('School Portal Address','slug', placeholder='example-school') }}{{ field('Administrator Name','admin_name', required=true) }}{{ field('Admin Username','username', required=true) }}{{ field('Temporary Password','password','password', required=true) }}<p class="muted">Use at least 10 characters with uppercase, lowercase and a number.</p>{{ field('Email','email','email') }}{{ field('Phone','phone') }}<button class="btn">Create School</button></form></section></main>""", title="Register School")
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
         portal = request.args.get("portal", "admin").lower()
+        school_slug = request.args.get("school", "").strip().lower()
         allowed_roles = LOGIN_AUDIENCES.get(portal)
         if request.method == "POST":
             portal = request.form.get("portal", "admin").lower()
+            school_slug = (
+                request.form.get("school")
+                or request.args.get("school", "")
+            ).strip().lower()
             allowed_roles = LOGIN_AUDIENCES.get(portal)
             identity = request.form["username"].strip().lower()
             if login_is_limited(identity):
@@ -1456,10 +1597,16 @@ def register_routes(app: Flask) -> None:
                 flash(
                     "Too many login attempts. Please wait before trying again.", "error")
                 return render("""<main class="login-shell"><section class="card login-card"><h2>Login temporarily limited</h2><p class="muted">Please wait and try again later.</p><a class="btn ghost" href="{{ url_for('login', portal=portal) }}">Back</a></section></main>""", title="Login limited", portal=portal), 429
-            candidates = User.query.filter(
+            candidates_query = User.query.filter(
                 User.active.is_(True),
                 func.lower(User.username) == identity,
-            ).all()
+                User.archived_at.is_(None),
+            )
+            if school_slug:
+                candidates_query = candidates_query.join(
+                    School, User.school_id == School.id
+                ).filter(func.lower(School.slug) == school_slug)
+            candidates = candidates_query.all()
             matching_users = [
                 candidate for candidate in candidates
                 if (not allowed_roles or candidate.role in allowed_roles)
@@ -1468,10 +1615,27 @@ def register_routes(app: Flask) -> None:
             ]
             user = matching_users[0] if len(matching_users) == 1 else None
             if user:
+                school = db.session.get(
+                    School, user.school_id) if user.school_id else None
+                if user.role != "system_admin" and (
+                    not school or school.archived_at or
+                    school.status in {"suspended", "archived"}
+                ):
+                    db.session.add(AuditLog(
+                        school_id=user.school_id, user_id=user.id,
+                        username=user.username, action="blocked_login",
+                        details="School account is suspended or archived",
+                        ip_address=client_ip()))
+                    db.session.commit()
+                    flash("This school portal is currently unavailable.", "error")
+                    return redirect(url_for(
+                        "login", portal=portal, school=school_slug))
                 session.clear()
                 csrf_token()
                 session["user_id"] = user.id
+                session["session_version"] = user.session_version or 1
                 session.permanent = request.form.get("remember") == "1"
+                user.last_login_at = datetime.utcnow()
                 log_action("login", f"{role_label(user.role)} signed in")
                 db.session.commit()
                 flash(f"Welcome back, {user.full_name}.", "success")
@@ -1512,17 +1676,21 @@ def register_routes(app: Flask) -> None:
             confirm_password = request.form.get("confirm_password", "")
             if not password_matches(user.password_hash, current_password):
                 flash("Current password is incorrect.", "error")
-            elif len(new_password) < 8:
-                flash("New password must be at least 8 characters.", "error")
             elif new_password != confirm_password:
                 flash("New passwords do not match.", "error")
             else:
-                user.password_hash = generate_password_hash(new_password)
-                user.must_change_password = False
-                log_action("change_password", "User changed password")
-                db.session.commit()
-                flash("Password changed successfully.", "success")
-                return redirect(url_for("dashboard"))
+                try:
+                    validate_password_strength(new_password)
+                    user.password_hash = generate_password_hash(new_password)
+                    user.must_change_password = False
+                    user.session_version = (user.session_version or 1) + 1
+                    session["session_version"] = user.session_version
+                    log_action("change_password", "User changed password")
+                    db.session.commit()
+                    flash("Password changed successfully.", "success")
+                    return redirect(url_for("dashboard"))
+                except ValueError as exc:
+                    flash(str(exc), "error")
         return render("""<main class="login-shell"><section class="card login-card"><h2>Change Password</h2><p class="muted">Create a private password before using your account.</p>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post">{{ csrf() }}{{ field('Current Temporary Password','current_password','password', required=true) }}{{ field('New Password','new_password','password', required=true) }}{{ field('Confirm New Password','confirm_password','password', required=true) }}<button class="btn green">Save Password</button></form></section></main>""", title="Change Password")
 
     @app.route("/logout")
@@ -1767,6 +1935,12 @@ def register_routes(app: Flask) -> None:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill
 
+        def spreadsheet_safe(value):
+            text_value = str(value or "")
+            if text_value.startswith(("=", "+", "-", "@", "\t", "\r")):
+                return "'" + text_value
+            return text_value
+
         user, school = current_user(), current_school()
         workbook = Workbook()
         students_sheet = workbook.active
@@ -1778,13 +1952,13 @@ def register_routes(app: Flask) -> None:
         students_sheet.append(student_headers)
         student_rows = get_school_student_query(school.id).order_by(User.full_name).all()
         for student, account, class_group in student_rows:
-            students_sheet.append([
+            students_sheet.append([spreadsheet_safe(value) for value in [
                 account.full_name, account.username, student.admission_no,
                 class_group.name if class_group else "", account.email or "",
                 account.phone or "", student.guardian_name or "",
                 student.guardian_email or "", student.guardian_phone or "",
                 "Yes" if account.active else "No",
-            ])
+            ]])
 
         teachers_sheet = workbook.create_sheet("Teachers")
         teacher_headers = ["full_name", "username", "email", "phone", "active"]
@@ -1793,10 +1967,10 @@ def register_routes(app: Flask) -> None:
             school_id=school.id, role="teacher"
         ).order_by(User.full_name).all()
         for teacher in teachers:
-            teachers_sheet.append([
+            teachers_sheet.append([spreadsheet_safe(value) for value in [
                 teacher.full_name, teacher.username, teacher.email or "",
                 teacher.phone or "", "Yes" if teacher.active else "No",
-            ])
+            ]])
 
         header_fill = PatternFill("solid", fgColor="092750")
         for sheet in (students_sheet, teachers_sheet):
@@ -1830,12 +2004,27 @@ def register_routes(app: Flask) -> None:
     @school_required
     def save_sms_settings():
         sms_api_url = request.form.get("sms_api_url", "").strip()
-        if sms_api_url and not sms_api_url.startswith(("https://", "http://")):
+        allowed_hosts = {
+            host.strip().lower() for host in
+            os.getenv("SMS_ALLOWED_HOSTS", "sms.nalosolutions.com").split(",")
+            if host.strip()
+        }
+        parsed = urlparse(sms_api_url) if sms_api_url else None
+        if sms_api_url and (
+            parsed.scheme != "https" or not parsed.hostname
+            or parsed.hostname.lower() not in allowed_hosts
+        ):
             flash(
-                "Enter a valid SMS API URL beginning with http:// or https://.", "error")
+                "That SMS provider host is not permitted by the platform owner.",
+                "error")
             return redirect(url_for("dashboard"))
         school = current_school()
         school.sms_api_url = sms_api_url or "https://sms.nalosolutions.com/smsbackend/Resl_Nalo/send-message/"
+        school.sms_api_key = request.form.get(
+            "sms_api_key", "").strip() or school.sms_api_key
+        school.sms_sender_id = clean_text(
+            request.form.get("sms_sender_id"), maximum=40
+        ) or school.sms_sender_id
         log_action("sms_api_url_updated", "SMS API URL updated")
         db.session.commit()
         flash("SMS API URL saved successfully.", "success")
@@ -2369,6 +2558,18 @@ def register_routes(app: Flask) -> None:
         if not score_count:
             flash("Enter at least one subject score before publishing this report.", "error")
         else:
+            now = datetime.utcnow()
+            Score.query.filter_by(
+                school_id=user.school_id, student_id=student.id,
+                term=school.term,
+                academic_year=school.academic_year,
+            ).update({
+                "workflow_status": "published",
+                "approved_at": now,
+                "published_at": now,
+                "approved_by": user.id,
+                "locked_at": now,
+            }, synchronize_session=False)
             log_action("publish_report",
                        f"Published {student.admission_no} for {school.term} {school.academic_year}")
             db.session.commit()
@@ -2402,10 +2603,44 @@ def register_routes(app: Flask) -> None:
                         "Please choose a valid student and subject.")
                 score = Score.query.filter_by(student_id=student.id, subject_id=subject.id, term=request.form.get("term") or school.term, academic_year=request.form.get("academic_year") or school.academic_year).first(
                 ) or Score(school_id=sid, student_id=student.id, subject_id=subject.id, term=request.form.get("term") or school.term, academic_year=request.form.get("academic_year") or school.academic_year)
-                score.class_score = clamp_score(
+                new_class_score = clamp_score(
                     request.form.get("class_score"), 30)
-                score.exam_score = clamp_score(
+                new_exam_score = clamp_score(
                     request.form.get("exam_score"), 70)
+                old_class_score = score.class_score
+                old_exam_score = score.exam_score
+                correction_reason = clean_text(
+                    request.form.get("correction_reason"),
+                    maximum=260,
+                    field="Correction reason",
+                )
+                if score.id and score.locked_at:
+                    if user.role != "school_admin":
+                        raise ValueError(
+                            "Published results are locked. Ask a school administrator to reopen this result.")
+                    if not correction_reason:
+                        raise ValueError(
+                            "A correction reason is required to reopen a published result.")
+                    ResultChange = app.platform_models["ResultChange"]
+                    db.session.add(ResultChange(
+                        school_id=sid,
+                        score_id=score.id,
+                        changed_by=user.id,
+                        old_class_score=old_class_score,
+                        old_exam_score=old_exam_score,
+                        new_class_score=new_class_score,
+                        new_exam_score=new_exam_score,
+                        reason=correction_reason,
+                    ))
+                    score.workflow_status = "draft"
+                    score.submitted_at = None
+                    score.approved_at = None
+                    score.published_at = None
+                    score.approved_by = None
+                    score.locked_at = None
+                    score.revision = (score.revision or 1) + 1
+                score.class_score = new_class_score
+                score.exam_score = new_exam_score
                 score.conduct = request.form.get("conduct", "")
                 score.position = request.form.get("position", "")
                 score.remarks = request.form.get("remarks", "")
@@ -2439,7 +2674,7 @@ def register_routes(app: Flask) -> None:
             scores_query = scores_query.filter(Student.class_id.in_(class_ids), Score.subject_id.in_(
                 subject_ids)) if class_ids and subject_ids else scores_query.filter(False)
         scores = scores_query.order_by(Score.updated_at.desc()).all()
-        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>Examination Scores</h2>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}<label>Student<select name="student_id" required>{% for st,u in students %}<option value="{{ st.id }}">{{ u.full_name }} - {{ st.admission_no }}</option>{% endfor %}</select></label><label>Subject<select name="subject_id" required>{% for s in subjects %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></label>{{ field('CA Score / 30','class_score','number') }}{{ field('Exam Score / 70','exam_score','number') }}{{ field('Term','term', value=school.term) }}{{ field('Academic Year','academic_year', value=school.academic_year) }}{{ field('Position','position', placeholder='1st, 2nd, 3rd') }}{{ field('Conduct','conduct', placeholder='Excellent, Good') }}{{ field('Remarks','remarks') }}<button class="btn green">Save Score</button></form></article><article class="card"><table><tr><th>Student</th><th>Subject</th><th>Total</th><th>Grade</th><th>Meaning</th><th>Remarks</th><th>Action</th></tr>{% for sc,st,u,sub in scores %}{% set total=sc.class_score+sc.exam_score %}{% set info=grade_info(total) %}<tr><td>{{ u.full_name }} <span class="muted">{{ st.admission_no }}</span></td><td>{{ sub.name }}</td><td>{{ total }}</td><td>{{ info.grade }}</td><td>{{ info.interpretation }}</td><td>{{ sc.remarks }}</td><td><button type="button" class="btn ghost score-edit" data-student="{{ st.id }}" data-subject="{{ sub.id }}" data-class-score="{{ sc.class_score }}" data-exam-score="{{ sc.exam_score }}" data-term="{{ sc.term }}" data-year="{{ sc.academic_year }}" data-position="{{ sc.position }}" data-conduct="{{ sc.conduct }}" data-remarks="{{ sc.remarks }}">Edit</button></td></tr>{% endfor %}</table></article></section></div></main>""", title="Examination Scores", students=students, subjects=subjects, scores=scores)
+        return render("""<main class="wrap"><div class="layout">""" + SIDEBAR + """<section class="grid"><article class="card"><h2>Examination Scores</h2>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}<form method="post" class="grid cols-3">{{ csrf() }}<label>Student<select name="student_id" required>{% for st,u in students %}<option value="{{ st.id }}">{{ u.full_name }} - {{ st.admission_no }}</option>{% endfor %}</select></label><label>Subject<select name="subject_id" required>{% for s in subjects %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></label>{{ field('CA Score / 30','class_score','number') }}{{ field('Exam Score / 70','exam_score','number') }}{{ field('Term','term', value=school.term) }}{{ field('Academic Year','academic_year', value=school.academic_year) }}{{ field('Position','position', placeholder='1st, 2nd, 3rd') }}{{ field('Conduct','conduct', placeholder='Excellent, Good') }}{{ field('Remarks','remarks') }}{% if user.role == 'school_admin' %}{{ field('Correction reason (required for published results)','correction_reason',placeholder='Explain why this published result is being reopened') }}{% endif %}<button class="btn green">Save Score</button></form></article><article class="card"><table><tr><th>Student</th><th>Subject</th><th>Total</th><th>Status</th><th>Grade</th><th>Meaning</th><th>Remarks</th><th>Action</th></tr>{% for sc,st,u,sub in scores %}{% set total=sc.class_score+sc.exam_score %}{% set info=grade_info(total) %}<tr><td>{{ u.full_name }} <span class="muted">{{ st.admission_no }}</span></td><td>{{ sub.name }}</td><td>{{ total }}</td><td><span class="status-pill">{{ sc.workflow_status }}</span></td><td>{{ info.grade }}</td><td>{{ info.interpretation }}</td><td>{{ sc.remarks }}</td><td>{% if not sc.locked_at or user.role == 'school_admin' %}<button type="button" class="btn ghost score-edit" data-student="{{ st.id }}" data-subject="{{ sub.id }}" data-class-score="{{ sc.class_score }}" data-exam-score="{{ sc.exam_score }}" data-term="{{ sc.term }}" data-year="{{ sc.academic_year }}" data-position="{{ sc.position }}" data-conduct="{{ sc.conduct }}" data-remarks="{{ sc.remarks }}">Edit</button>{% else %}<span class="muted">Locked</span>{% endif %}</td></tr>{% endfor %}</table></article></section></div></main>""", title="Examination Scores", students=students, subjects=subjects, scores=scores)
 
     def period_record(model, student_id, school):
         return model.query.filter_by(student_id=student_id, term=school.term, academic_year=school.academic_year).first()
@@ -2691,7 +2926,8 @@ def register_routes(app: Flask) -> None:
                    f"Viewed {student.admission_no} for {school.term} {school.academic_year}")
         db.session.commit()
         return render(REPORT_CARD_PAGE, title="Academic Report Card",
-                      **build_report_context(student, school, child_user))
+                      **build_report_context(
+                          student, school, child_user, published_only=True))
 
     @app.route("/parent/report/<int:student_id>/payment")
     @login_required("parent")
@@ -2816,7 +3052,11 @@ def register_routes(app: Flask) -> None:
             abort(404)
         if not app.student_report_is_paid(student, school, user):
             return redirect(url_for("student_report_payment"))
-        report = build_report_context(student, school, user)
+        report = build_report_context(
+            student, school, user, published_only=True)
+        if not report["rows"]:
+            flash("Your report has not been published yet.", "error")
+            return redirect(url_for("dashboard"))
         buffer = BytesIO()
         from reportlab.lib.pagesizes import A4
         from reportlab.lib import colors
@@ -2972,7 +3212,8 @@ def register_routes(app: Flask) -> None:
         if not app.student_report_is_paid(student, school, user):
             return redirect(url_for("student_report_payment"))
         return render(REPORT_CARD_PAGE, title="Academic Report Card",
-                      **build_report_context(student, school, user))
+                      **build_report_context(
+                          student, school, user, published_only=True))
         rows = db.session.query(Score, Subject).join(Subject, Score.subject_id == Subject.id).filter(
             Score.student_id == student.id).order_by(Subject.name).all() if student else []
         attendance = period_record(
@@ -2999,10 +3240,9 @@ def register_routes(app: Flask) -> None:
 
 app = create_app()
 
-with app.app_context():
-    init_db()
-
 
 if __name__ == "__main__":
+    with app.app_context():
+        init_db()
     app.run(host="0.0.0.0", port=int(
         os.getenv("PORT", "5000")), debug=Config.DEBUG)

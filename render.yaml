@@ -3,7 +3,7 @@ services:
     name: smart-schools-sms
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn run:app
+    startCommand: python manage.py migrate && gunicorn run:app
     disk:
       name: smart-schools-uploads
       mountPath: /opt/render/project/src/uploads
@@ -43,3 +43,7 @@ services:
         sync: false
       - key: PASSWORD_RESET_EXPIRY_MINUTES
         value: "60"
+      - key: PASSWORD_MIN_LENGTH
+        value: "10"
+      - key: SESSION_COOKIE_SAMESITE
+        value: "Lax"
