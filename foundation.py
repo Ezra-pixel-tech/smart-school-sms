@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from flask import Response, current_app, jsonify, request
+from flask import current_app, jsonify, request
 from sqlalchemy import text
 
 
@@ -41,8 +41,7 @@ def validate_environment(app) -> list[str]:
         errors.append("SECRET_KEY must contain at least 32 characters in production.")
     if production and database_url.startswith("sqlite:"):
         warnings.append(
-            "Production is using SQLite. Configure DATABASE_URL with PostgreSQL "
-            "before accepting live school data."
+            "Production is using SQLite. Configure DATABASE_URL with PostgreSQL before accepting live school data."
         )
     if os.getenv("PAYSTACK_SECRET_KEY") and not os.getenv("PAYSTACK_SECRET_KEY", "").startswith("sk_"):
         errors.append("PAYSTACK_SECRET_KEY has an invalid format.")
@@ -60,10 +59,7 @@ def validate_environment(app) -> list[str]:
 
 
 def wants_json() -> bool:
-    return (
-        request.path.startswith("/api/")
-        or request.accept_mimetypes.best == "application/json"
-    )
+    return request.path.startswith("/api/") or request.accept_mimetypes.best == "application/json"
 
 
 def register_error_handlers(app) -> None:
@@ -75,6 +71,7 @@ def register_error_handlers(app) -> None:
     }
 
     for status, message in labels.items():
+
         def handler(error, status=status, message=message):
             if wants_json():
                 return jsonify(error=message, status=status), status
@@ -126,8 +123,7 @@ def register_health_routes(app, db) -> None:
     @app.get("/ready")
     def readiness():
         if current_app.config.get("ENVIRONMENT_WARNINGS"):
-            return jsonify(status="ready", warnings=len(
-                current_app.config["ENVIRONMENT_WARNINGS"])), 200
+            return jsonify(status="ready", warnings=len(current_app.config["ENVIRONMENT_WARNINGS"])), 200
         return jsonify(status="ready"), 200
 
 
@@ -141,8 +137,9 @@ def clean_text(value, *, maximum=255, required=False, field="value") -> str:
 
 
 def clean_slug(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", clean_text(
-        value, maximum=100, required=True, field="School slug").lower()).strip("-")
+    slug = re.sub(r"[^a-z0-9]+", "-", clean_text(value, maximum=100, required=True, field="School slug").lower()).strip(
+        "-"
+    )
     if len(slug) < 3:
         raise ValueError("School slug must contain at least 3 letters or numbers.")
     return slug
@@ -158,8 +155,7 @@ def clean_email(value: str, *, required=False) -> str:
 def validate_password_strength(password: str) -> None:
     minimum = max(10, int(os.getenv("PASSWORD_MIN_LENGTH", "10")))
     if len(password or "") < minimum:
-        raise ValueError(
-            f"Password must contain at least {minimum} characters.")
+        raise ValueError(f"Password must contain at least {minimum} characters.")
     if not re.search(r"[A-Z]", password):
         raise ValueError("Password must contain an uppercase letter.")
     if not re.search(r"[a-z]", password):

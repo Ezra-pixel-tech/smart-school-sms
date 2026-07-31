@@ -66,3 +66,18 @@ Two repository files need a separate security decision: `.env` and
 cover them. They should be untracked after a verified backup, and any historical
 secret should be rotated. Rewriting Git history is intentionally not part of
 this branch because it is destructive and requires explicit approval.
+
+### Required one-time secret rotation
+
+An older repository revision contained a real application `SECRET_KEY`. Before
+deploying this revision, replace the `SECRET_KEY` value in Render with a newly
+generated cryptographically random value of at least 32 bytes. Do not reuse the
+old value and do not paste the replacement into Git, support messages, or logs.
+Changing it signs out existing browser sessions, which is expected. The current
+`render.yaml` generates a secret for new services, but it does not rotate an
+already-created Render service automatically.
+
+The local `.env` and SQLite database are intentionally ignored and untracked.
+Keep their verified backups outside the repository. Rewriting public Git history
+is a separate repository-owner operation; rotating the deployed value is the
+immediate security control.

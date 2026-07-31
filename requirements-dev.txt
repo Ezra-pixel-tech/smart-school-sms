@@ -1,0 +1,5 @@
+-r requirements.txt
+mypy>=1.11,<3
+pytest>=8,<9
+ruff>=0.9,<1
+types-openpyxl>=3.1

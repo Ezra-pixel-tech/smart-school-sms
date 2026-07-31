@@ -1,0 +1,39 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [".venv", "instance", "uploads"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+files = [
+  "config.py",
+  "foundation.py",
+  "manage.py",
+  "migrations.py",
+  "platform_features.py",
+  "run.py",
+  "smart_features.py",
+]
+ignore_missing_imports = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_ignores = true
+exclude = ["^app/"]
+
+[[tool.mypy.overrides]]
+module = ["run", "platform_features", "smart_features"]
+disable_error_code = [
+  "arg-type",
+  "assignment",
+  "attr-defined",
+  "method-assign",
+  "name-defined",
+  "var-annotated",
+]

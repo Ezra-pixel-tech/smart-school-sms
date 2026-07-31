@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 
 from sqlalchemy import inspect, text
 
-
 MIGRATIONS = (
     (
         "20260730_01_foundation",
@@ -92,31 +91,25 @@ def _foundation(db) -> None:
     ]:
         _add_column(db, "announcements", name, ddl)
 
-    db.session.execute(text(
-        "UPDATE schools SET slug = 'school-' || id WHERE slug IS NULL OR slug = ''"
-    ))
-    db.session.execute(text(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_schools_slug ON schools (slug)"
-    ))
+    db.session.execute(text("UPDATE schools SET slug = 'school-' || id WHERE slug IS NULL OR slug = ''"))
+    db.session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_schools_slug ON schools (slug)"))
 
 
 def run_migrations(db, create_all, legacy_migrations=None) -> list[str]:
     """Run additive, idempotent migrations and record each applied version."""
     create_all()
-    db.session.execute(text("""
+    db.session.execute(
+        text("""
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version VARCHAR(80) PRIMARY KEY,
             description VARCHAR(260) NOT NULL,
             applied_at TIMESTAMP NOT NULL
         )
-    """))
+    """)
+    )
     db.session.commit()
 
-    applied = {
-        row[0] for row in db.session.execute(
-            text("SELECT version FROM schema_migrations")
-        ).fetchall()
-    }
+    applied = {row[0] for row in db.session.execute(text("SELECT version FROM schema_migrations")).fetchall()}
     completed: list[str] = []
 
     if legacy_migrations:

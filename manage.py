@@ -8,9 +8,7 @@ from run import app, db, ensure_compatibility_migrations
 
 def migrate() -> None:
     with app.app_context():
-        applied = run_migrations(
-            db, db.create_all, legacy_migrations=ensure_compatibility_migrations
-        )
+        applied = run_migrations(db, db.create_all, legacy_migrations=ensure_compatibility_migrations)
         if applied:
             print("Applied migrations: " + ", ".join(applied))
         else:

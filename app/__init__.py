@@ -1,6 +1,7 @@
 from flask import Flask, render_template
-from app.extensions import db, bcrypt, login_manager
+
 from app.auth.routes import auth
+from app.extensions import bcrypt, db, login_manager
 
 
 def create_app():
@@ -16,6 +17,7 @@ def create_app():
     @app.route("/")
     def home():
         return render_template("shared/index.html")
+
     with app.app_context():
         db.create_all()
     return app
