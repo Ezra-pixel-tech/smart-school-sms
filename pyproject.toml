@@ -18,6 +18,7 @@ files = [
   "manage.py",
   "migrations.py",
   "platform_features.py",
+  "render_start.py",
   "run.py",
   "smart_features.py",
 ]

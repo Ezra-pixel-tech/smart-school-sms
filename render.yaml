@@ -3,7 +3,7 @@ services:
     name: smart-schools-sms
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python manage.py migrate && gunicorn run:app
+    startCommand: python render_start.py
     disk:
       name: smart-schools-uploads
       mountPath: /opt/render/project/src/uploads
