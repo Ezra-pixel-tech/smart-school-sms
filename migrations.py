@@ -17,7 +17,12 @@ MIGRATIONS = (
 
 
 def _columns(db, table: str) -> set[str]:
-    return {column["name"] for column in inspect(db.engine).get_columns(table)}
+    # Inspect through the migration transaction itself. PostgreSQL holds an
+    # ACCESS EXCLUSIVE lock for ALTER TABLE until commit; inspecting through a
+    # second engine connection after an earlier ALTER makes the migration wait
+    # forever on its own lock.
+    connection = db.session.connection()
+    return {column["name"] for column in inspect(connection).get_columns(table)}
 
 
 def _add_column(db, table: str, name: str, ddl: str) -> None:

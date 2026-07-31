@@ -5,6 +5,19 @@ from unittest.mock import MagicMock, patch
 import migrations
 
 
+def test_column_inspection_uses_migration_transaction_connection() -> None:
+    db = MagicMock()
+    connection = db.session.connection.return_value
+    inspector = MagicMock()
+    inspector.get_columns.return_value = [{"name": "id"}, {"name": "session_version"}]
+
+    with patch.object(migrations, "inspect", return_value=inspector) as inspect_connection:
+        assert migrations._columns(db, "users") == {"id", "session_version"}
+
+    inspect_connection.assert_called_once_with(connection)
+    inspector.get_columns.assert_called_once_with("users")
+
+
 def test_legacy_schema_changes_commit_before_foundation_inspection() -> None:
     events: list[str] = []
     db = MagicMock()
