@@ -656,6 +656,34 @@ def current_school():
     return db.session.get(School, user.school_id) if user and user.school_id else None
 
 
+def portal_school():
+    """Resolve the tenant represented by this request without trusting client IDs."""
+    authenticated_school = current_school()
+    if authenticated_school:
+        return authenticated_school
+
+    slug = ""
+    if request.view_args:
+        slug = str(request.view_args.get("school_slug") or request.view_args.get("slug") or "")
+    slug = slug or request.args.get("school", "")
+    if request.method == "POST":
+        slug = request.form.get("school", "") or slug
+
+    base_domain = Config.SCHOOL_PORTAL_BASE_DOMAIN
+    host = request.host.split(":", 1)[0].lower().rstrip(".")
+    if not slug and base_domain and host.endswith(f".{base_domain}"):
+        candidate = host[: -(len(base_domain) + 1)]
+        if candidate and "." not in candidate and candidate != "www":
+            slug = candidate
+
+    if not slug:
+        return None
+    return School.query.filter(
+        func.lower(School.slug) == slug.strip().lower(),
+        School.archived_at.is_(None),
+    ).first()
+
+
 def log_action(action: str, details: str = "") -> None:
     user = current_user()
     db.session.add(
@@ -1513,6 +1541,32 @@ REPORT_CARD_PAGE = (
 
 
 def render(page, **context):
+    if request.endpoint == "login" and context.get("selected_school"):
+        page = page.replace(
+            "{{ url_for('static',filename='smart-school-logo.png') }}",
+            "{{ logo_url }}",
+            1,
+        )
+        page = page.replace("Smart School SMS logo", "{{ brand_name }} logo", 1)
+        page = page.replace("<h1>Smart School SMS</h1>", "<h1>{{ brand_name }}</h1>", 1)
+        motto_marker = "<h1>{{ brand_name }}</h1><p>"
+        motto_start = page.find(motto_marker)
+        if motto_start >= 0:
+            motto_start += len(motto_marker)
+            motto_end = page.find("</p>", motto_start)
+            page = page[:motto_start] + "{{ brand_motto }}" + page[motto_end:]
+        page = page.replace("Sign in to continue", "Sign in to {{ brand_name }}", 1)
+        page = page.replace(
+            '<input type="hidden" name="portal" value="{{ portal }}">',
+            '<input type="hidden" name="portal" value="{{ portal }}">'
+            '<input type="hidden" name="school" value="{{ school_slug }}">',
+            1,
+        )
+        for audience in ("admin", "teacher", "parent", "student"):
+            page = page.replace(
+                f"url_for('login',portal='{audience}')",
+                f"url_for('login',school_slug=school_slug,portal='{audience}')",
+            )
     return render_template_string(BASE_HTML.replace("{% block body %}{% endblock %}", page), **context)
 
 
@@ -1547,9 +1601,11 @@ def register_routes(app: Flask) -> None:
 
     @app.context_processor
     def inject_helpers():
+        active_school = portal_school()
         return {
             "user": current_user(),
-            "school": current_school(),
+            "school": active_school,
+            "portal_school": active_school,
             "role_label": role_label,
             "now": datetime.now(),
             "csrf_token": csrf_token,
@@ -1592,6 +1648,21 @@ def register_routes(app: Flask) -> None:
                 if value
             }
         if filename not in allowed:
+            abort(404)
+        return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+    @app.route("/school/<school_slug>/branding/<asset>")
+    def public_school_branding(school_slug, asset):
+        school = School.query.filter(
+            func.lower(School.slug) == school_slug.lower(),
+            School.archived_at.is_(None),
+        ).first_or_404()
+        filename = {
+            "logo": school.crest,
+            "favicon": school.favicon,
+            "background": school.login_background,
+        }.get(asset)
+        if not filename:
             abort(404)
         return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
@@ -1667,9 +1738,13 @@ def register_routes(app: Flask) -> None:
         )
 
     @app.route("/login", methods=["GET", "POST"])
-    def login():
+    @app.route("/school/<school_slug>/login", methods=["GET", "POST"])
+    def login(school_slug=None):
         portal = request.args.get("portal", "admin").lower()
-        school_slug = request.args.get("school", "").strip().lower()
+        school_slug = (school_slug or request.args.get("school", "")).strip().lower()
+        selected_school = portal_school()
+        if school_slug and not selected_school:
+            abort(404)
         allowed_roles = LOGIN_AUDIENCES.get(portal)
         if request.method == "POST":
             portal = request.form.get("portal", "admin").lower()
@@ -1697,10 +1772,8 @@ def register_routes(app: Flask) -> None:
                 func.lower(User.username) == identity,
                 User.archived_at.is_(None),
             )
-            if school_slug:
-                candidates_query = candidates_query.join(School, User.school_id == School.id).filter(
-                    func.lower(School.slug) == school_slug
-                )
+            if selected_school:
+                candidates_query = candidates_query.filter(User.school_id == selected_school.id)
             candidates = candidates_query.all()
             matching_users = [
                 candidate
@@ -1754,12 +1827,24 @@ def register_routes(app: Flask) -> None:
             portal, "Login"
         )
         visual = portal if portal in {"admin", "teacher", "student"} else "admin"
+        brand_name = selected_school.name if selected_school else "Smart School SMS"
+        brand_motto = (selected_school.motto or "Learn · Lead · Inspire") if selected_school else "Learn · Lead · Inspire"
+        logo_url = (
+            url_for("public_school_branding", school_slug=selected_school.slug, asset="logo")
+            if selected_school and selected_school.crest
+            else url_for("static", filename="smart-school-logo.png")
+        )
         return render(
             """<style>.topbar{display:none!important}</style><main class="login-shell"><section class="card auth-card"><aside class="auth-brand-panel"><div><img src="{{ url_for('static',filename='smart-school-logo.png') }}" alt="Smart School SMS logo"><h1>Smart School SMS</h1><p>Learn <span style="color:#ff4f9a">•</span> Lead <span style="color:#ff4f9a">•</span> Inspire</p></div></aside><div class="auth-form-panel"><h2>Welcome back</h2><p class="muted">Sign in to continue</p><nav class="role-tabs" aria-label="Choose login portal"><a class="role-tab {{ 'active' if portal == 'admin' else '' }}" href="{{ url_for('login',portal='admin') }}"><b>♢</b>Administrator</a><a class="role-tab {{ 'active' if portal == 'teacher' else '' }}" href="{{ url_for('login',portal='teacher') }}"><b>▣</b>Teacher</a><a class="role-tab {{ 'active' if portal == 'parent' else '' }}" href="{{ url_for('login',portal='parent') }}"><b>♙</b>Parent</a><a class="role-tab {{ 'active' if portal == 'student' else '' }}" href="{{ url_for('login',portal='student') }}"><b>⌂</b>Student</a></nav>{% for category, message in get_flashed_messages(with_categories=true) %}<div class="flash {{ category }}" role="alert">{{ message }}</div>{% endfor %}<form method="post" onsubmit="this.querySelector('button[type=submit]').textContent='Signing in…';this.querySelector('button[type=submit]').disabled=true">{{ csrf() }}<input type="hidden" name="portal" value="{{ portal }}"><label>Email address or username<input name="username" autocomplete="username" placeholder="Enter your email or username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required></label><div class="auth-options"><label class="remember-label"><input type="checkbox" name="remember" value="1"> Remember me</label><a href="{{ url_for('forgot_password',portal=portal) }}" style="color:var(--app-primary);font-weight:750">Forgot password?</a></div><button class="btn auth-submit" type="submit">Sign In</button></form><p class="login-help muted">Need help? Contact your school administrator.</p></div></section></main>""",
             title=portal_label,
             portal=portal,
             portal_label=portal_label,
             visual=visual,
+            selected_school=selected_school,
+            school_slug=school_slug,
+            brand_name=brand_name,
+            brand_motto=brand_motto,
+            logo_url=logo_url,
         )
 
     @app.route("/reset-password", methods=["GET", "POST"])

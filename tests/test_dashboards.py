@@ -773,6 +773,57 @@ class DashboardTests(unittest.TestCase):
         response = client.get(f"/uploads/{filename}")
         self.assertEqual(response.status_code, 404)
 
+    def test_school_portal_login_uses_tenant_branding(self):
+        self.school.name = "Branded Academy"
+        self.school.slug = "branded-academy"
+        self.school.motto = "Knowledge and Service"
+        self.school.primary_color = "#123456"
+        self.school.secondary_color = "#345678"
+        self.school.accent_color = "#198754"
+        run.db.session.commit()
+
+        response = run.app.test_client().get(f"/school/{self.school.slug}/login?portal=admin")
+        page = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Branded Academy", page)
+        self.assertIn("Knowledge and Service", page)
+        self.assertIn("#345678", page)
+        self.assertIn(f'name="school" value="{self.school.slug}"', page)
+
+    def test_school_portal_rejects_credentials_from_another_tenant(self):
+        other_school = run.School(name="Second Portal", slug="second-portal", onboarded=True)
+        run.db.session.add(other_school)
+        run.db.session.flush()
+        other_admin = run.User(
+            school_id=other_school.id,
+            role="school_admin",
+            full_name="Second Portal Admin",
+            username=self.users["school_admin"].username,
+            password_hash=generate_password_hash("Different@Test123"),
+            must_change_password=False,
+        )
+        run.db.session.add(other_admin)
+        run.db.session.commit()
+
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["_csrf"] = "test-csrf"
+        response = client.post(
+            f"/school/{other_school.slug}/login?portal=admin",
+            data={
+                "_csrf": "test-csrf",
+                "portal": "admin",
+                "school": other_school.slug,
+                "username": self.users["school_admin"].username,
+                "password": "Test@12345",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Invalid username, password, or portal", response.get_data(as_text=True))
+
 
 if __name__ == "__main__":
     unittest.main()

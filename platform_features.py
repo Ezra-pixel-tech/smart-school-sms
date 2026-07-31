@@ -236,7 +236,7 @@ def register_platform_features(app, ctx):
 
     @app.context_processor
     def school_theme():
-        school = current_school()
+        school = ctx["portal_school"]()
         if not school:
             return {"school_theme_style": ""}
         style = (
