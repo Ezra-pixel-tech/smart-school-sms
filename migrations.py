@@ -114,6 +114,11 @@ def run_migrations(db, create_all, legacy_migrations=None) -> list[str]:
 
     if legacy_migrations:
         legacy_migrations()
+        # Legacy PostgreSQL ALTER statements hold ACCESS EXCLUSIVE locks until
+        # committed.  The foundation migration inspects tables through a new
+        # connection, so leaving this transaction open makes that inspection
+        # wait forever on locks owned by this same migration process.
+        db.session.commit()
 
     for version, description in MIGRATIONS:
         if version in applied:
