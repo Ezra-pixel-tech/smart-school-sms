@@ -1751,6 +1751,8 @@ def register_routes(app: Flask) -> None:
         selected_school = portal_school()
         if school_slug and not selected_school:
             abort(404)
+        if selected_school:
+            school_slug = selected_school.slug
         allowed_roles = LOGIN_AUDIENCES.get(portal)
         if request.method == "POST":
             portal = request.form.get("portal", "admin").lower()
@@ -2053,7 +2055,11 @@ def register_routes(app: Flask) -> None:
                 else 0
             )
             fee_balance = max((fee.amount_due - fee.amount_paid) if fee else 0, 0)
-            student_class = db.session.get(ClassRoom, student.class_id) if student and student.class_id else None
+            student_class = (
+                ClassRoom.query.filter_by(id=student.class_id, school_id=user.school_id).first()
+                if student and student.class_id
+                else None
+            )
             timetable_rows = (
                 db.session.query(Timetable, Subject)
                 .outerjoin(Subject, Timetable.subject_id == Subject.id)
@@ -2470,7 +2476,7 @@ def register_routes(app: Flask) -> None:
                     )
                 student = student_query.first()
                 if student:
-                    linked_user = db.session.get(User, student.user_id)
+                    linked_user = User.query.filter_by(id=student.user_id, school_id=sid).first()
                     db.session.delete(student)
                     if linked_user:
                         db.session.delete(linked_user)
@@ -2492,7 +2498,11 @@ def register_routes(app: Flask) -> None:
                 ):
                     flash("Class promotion is available only during Third Term.", "error")
                 else:
-                    previous = db.session.get(ClassRoom, student.class_id) if student.class_id else None
+                    previous = (
+                        ClassRoom.query.filter_by(id=student.class_id, school_id=sid).first()
+                        if student.class_id
+                        else None
+                    )
                     student.promotion_note = (
                         f"Promoted from {previous.name if previous else 'Unassigned'} to {next_class.name}"
                     )
@@ -2503,7 +2513,7 @@ def register_routes(app: Flask) -> None:
                     flash(f"Student promoted successfully to {next_class.name}.", "success")
             elif user.role == "school_admin" and action == "reset_password":
                 student = Student.query.filter_by(id=int(request.form["student_id"]), school_id=sid).first()
-                linked_user = db.session.get(User, student.user_id) if student else None
+                linked_user = User.query.filter_by(id=student.user_id, school_id=sid).first() if student else None
                 if linked_user:
                     password = generate_temporary_password()
                     linked_user.password_hash = generate_password_hash(password)
@@ -2622,7 +2632,7 @@ def register_routes(app: Flask) -> None:
             if not student or student.class_id not in allowed_classes:
                 abort(403)
             if request.form.get("action") == "delete":
-                account = db.session.get(User, student.user_id)
+                account = User.query.filter_by(id=student.user_id, school_id=sid).first()
                 admission_no = student.admission_no
                 db.session.delete(student)
                 if account:
@@ -2640,7 +2650,7 @@ def register_routes(app: Flask) -> None:
                 elif not next_class or next_class.id == student.class_id:
                     flash("Select a different valid next class.", "error")
                 else:
-                    previous = db.session.get(ClassRoom, student.class_id)
+                    previous = ClassRoom.query.filter_by(id=student.class_id, school_id=sid).first()
                     student.promotion_note = (
                         f"Promoted from {previous.name if previous else 'Unassigned'} to {next_class.name}"
                     )
@@ -2782,7 +2792,10 @@ def register_routes(app: Flask) -> None:
             .all()
         )
         # Use explicit child lookup to avoid leaking users across schools and keep SQLite/PostgreSQL behavior identical.
-        rows = [(link, parent, db.session.get(User, student.user_id), student) for link, parent, student in links]
+        rows = [
+            (link, parent, User.query.filter_by(id=student.user_id, school_id=sid).first(), student)
+            for link, parent, student in links
+        ]
         return render(
             """<main class="wrap"><div class="layout">"""
             + SIDEBAR
@@ -3099,7 +3112,7 @@ def register_routes(app: Flask) -> None:
         student = Student.query.filter_by(id=student_id, school_id=user.school_id).first_or_404()
         if user.role == "teacher" and student.class_id not in teacher_class_ids(user):
             abort(403)
-        report_user = db.session.get(User, student.user_id)
+        report_user = User.query.filter_by(id=student.user_id, school_id=user.school_id).first()
         if not report_user:
             abort(404)
         return render(
@@ -4166,7 +4179,11 @@ def register_routes(app: Flask) -> None:
             REPORT_CARD_PAGE,
             title="Academic Report Card",
             student=student,
-            student_class=db.session.get(ClassRoom, student.class_id) if student and student.class_id else None,
+            student_class=(
+                ClassRoom.query.filter_by(id=student.class_id, school_id=user.school_id).first()
+                if student and student.class_id
+                else None
+            ),
             rows=rows,
             attendance=attendance,
             fees=fees,
@@ -4187,7 +4204,11 @@ def register_routes(app: Flask) -> None:
             + """<section class="card report-card terminal"><div class="actions no-print" style="justify-content:flex-end;margin-bottom:12px"><button class="btn" onclick="window.print()">Print Result</button><a class="btn ghost" href="{{ url_for('student_results_pdf') }}">Download PDF</a></div><div class="report-top">{% if school.crest %}<img src="{{ url_for('uploads', filename=school.crest) }}" alt="School crest">{% else %}<span></span>{% endif %}<div><h2>{{ school.name }}</h2><p>{{ school.address }}</p><p>{{ school.phone }} {{ school.email }}</p><p>{{ school.motto }}</p><div class="terminal-title">Terminal Report</div></div><span></span></div><div class="terminal-student">&lt;&lt;{{ user.full_name|upper }}&gt;&gt;</div><div class="terminal-meta"><span><b>CLASS:</b> {{ student_class.name if student_class else '-' }}</span><span><b>ACADEMIC YEAR:</b> {{ school.academic_year or '-' }}</span><span><b>POSITION IN CLASS:</b> {{ position or '-' }}</span><span><b>ACADEMIC TERM:</b> {{ school.term or '-' }}</span><span><b>NEXT TERM RE-OPENS:</b> -</span><span><b>NUMBER ON ROLL:</b> -</span></div><table class="subjects"><tr><th>Subjects</th><th>Class Score<br>(50%)</th><th>Exam Score<br>(50%)</th><th>Total Score<br>(100%)</th><th>Grade</th><th>Grade Meaning</th><th>Teacher</th></tr>{% for sc,sub in rows %}{% set subject_total=sc.class_score+sc.exam_score %}{% set info=grade_info(subject_total) %}<tr><td>{{ sub.name }}</td><td>{{ sc.class_score }}</td><td>{{ sc.exam_score }}</td><td>{{ subject_total }}</td><td>{{ info.grade }}</td><td>{{ info.interpretation }}</td><td>{{ sc.remarks }}</td></tr>{% endfor %}{% if not rows %}<tr><td colspan="7">No results have been entered yet.</td></tr>{% endif %}</table><table class="remarks" style="margin-top:18px"><tr><td><b>INTEREST</b></td><td></td></tr><tr><td><b>CONDUCT</b></td><td>{{ conduct or 'Good' }}</td></tr><tr><td><b>PROMOTION STATUS</b></td><td>{{ student.promotion_note or 'Not promoted' }}</td></tr><tr><td><b>ATTITUDE</b></td><td></td></tr><tr><td><b>CLASS TEACHER'S REMARK</b></td><td>{{ overall.interpretation }}</td></tr><tr><td><b>ACADEMIC REMARK</b></td><td>Average: {{ average }}% | Attendance: {{ attendance.present_days if attendance else 0 }}/{{ attendance.total_days if attendance else 0 }} | Fee Balance: {{ ((fees.amount_due - fees.amount_paid) if fees else 0) }}</td></tr></table><div style="margin-top:24px"><b>HEADTEACHER'S SIGNATURE</b>{% if school.head_signature %}<br><img class="signature-img" src="{{ url_for('uploads', filename=school.head_signature) }}" alt="signature">{% else %}<div class="signature-line"></div>{% endif %}</div><table class="grading-key" style="margin-top:28px"><tr><th>80 - 100</th><th>70 - 79</th><th>65 - 69</th><th>60 - 64</th><th>55 - 59</th><th>50 - 54</th><th>45 - 49</th><th>40 - 44</th><th>0 - 39</th></tr><tr><td>A1</td><td>B2</td><td>B3</td><td>C4</td><td>C5</td><td>C6</td><td>D7</td><td>E8</td><td>F9</td></tr><tr><td>Excellent</td><td>Very Good</td><td>Good</td><td>Credit</td><td>Credit</td><td>Credit</td><td>Pass</td><td>Pass</td><td>Fail</td></tr></table><p class="powered">Powered by Smart Schools SMS</p></section></div></main>""",
             title="My Results",
             student=student,
-            student_class=db.session.get(ClassRoom, student.class_id) if student and student.class_id else None,
+            student_class=(
+                ClassRoom.query.filter_by(id=student.class_id, school_id=user.school_id).first()
+                if student and student.class_id
+                else None
+            ),
             rows=rows,
             attendance=attendance,
             fees=fees,

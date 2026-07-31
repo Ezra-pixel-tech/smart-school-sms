@@ -965,6 +965,109 @@ class DashboardTests(unittest.TestCase):
         self.assertFalse(school.onboarded)
         self.assertIn("School logo", response.get_data(as_text=True))
 
+    def test_school_portal_is_resolved_from_configured_subdomain(self):
+        self.school.name = "Subdomain Academy"
+        self.school.slug = "subdomain-academy"
+        run.db.session.commit()
+
+        with patch.object(run.Config, "SCHOOL_PORTAL_BASE_DOMAIN", "schools.test"):
+            response = run.app.test_client().get(
+                "/login?portal=admin", base_url="https://subdomain-academy.schools.test"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        page = response.get_data(as_text=True)
+        self.assertIn("Subdomain Academy", page)
+        self.assertIn('name="school" value="subdomain-academy"', page)
+
+    def test_school_admin_cannot_update_another_school_settings(self):
+        owned = run.School(name="Owned Settings", slug="owned-settings", onboarded=True)
+        other = run.School(name="Protected Settings", slug="protected-settings", onboarded=True)
+        run.db.session.add_all([owned, other])
+        run.db.session.flush()
+        admin = run.User(
+            school_id=owned.id,
+            role="school_admin",
+            full_name="Settings Admin",
+            username="settings_admin",
+            password_hash=generate_password_hash("Strong@Test123"),
+            must_change_password=False,
+        )
+        run.db.session.add(admin)
+        run.db.session.commit()
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = admin.session_version
+            session["_csrf"] = "test-csrf"
+
+        response = client.post(
+            "/setup/1",
+            data={
+                "_csrf": "test-csrf",
+                "school_id": other.id,
+                "name": "Updated Owned Settings",
+                "slug": "updated-owned-settings",
+                "email": "owned@example.com",
+            },
+        )
+        run.db.session.refresh(other)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(other.name, "Protected Settings")
+        self.assertEqual(other.slug, "protected-settings")
+
+    def test_school_admin_cannot_read_another_school_receipt(self):
+        Invoice = run.app.platform_models["Invoice"]
+        FinancePayment = run.app.platform_models["FinancePayment"]
+        other = run.School(name="Receipt Tenant", slug="receipt-tenant", onboarded=True)
+        run.db.session.add(other)
+        run.db.session.flush()
+        student_user = run.User(
+            school_id=other.id,
+            role="student",
+            full_name="Other Student",
+            username="other_receipt_student",
+            password_hash=generate_password_hash("Strong@Test123"),
+            must_change_password=False,
+        )
+        run.db.session.add(student_user)
+        run.db.session.flush()
+        student = run.Student(school_id=other.id, user_id=student_user.id, admission_no="OTHER-RECEIPT")
+        run.db.session.add(student)
+        run.db.session.flush()
+        invoice = Invoice(
+            school_id=other.id,
+            student_id=student.id,
+            invoice_number="OTHER-TENANT-INVOICE",
+            academic_year="2026/2027",
+            term="Term 1",
+            amount_subunit=1000,
+            balance_subunit=0,
+            status="paid",
+        )
+        run.db.session.add(invoice)
+        run.db.session.flush()
+        payment = FinancePayment(
+            school_id=other.id,
+            invoice_id=invoice.id,
+            student_id=student.id,
+            reference="OTHER-TENANT-PAYMENT",
+            amount_subunit=1000,
+            currency="GHS",
+        )
+        run.db.session.add(payment)
+        run.db.session.commit()
+        client = run.app.test_client()
+        admin = self.users["school_admin"]
+        with client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = admin.session_version
+
+        response = client.get(f"/finance/payments/{payment.id}/receipt")
+
+        self.assertEqual(response.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

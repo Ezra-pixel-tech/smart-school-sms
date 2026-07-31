@@ -349,7 +349,9 @@ def register_feature_routes(app, ctx):
             else:
                 try:
                     validate_password_strength(password)
-                    user = db.session.get(User, item.user_id)
+                    user = User.query.filter_by(id=item.user_id).first()
+                    if not user:
+                        abort(400)
                     user.password_hash = generate_password_hash(password)
                     user.must_change_password = False
                     user.session_version = (user.session_version or 1) + 1
@@ -582,7 +584,11 @@ def register_feature_routes(app, ctx):
                             created += 1
                     else:
                         student_record = admission_existing
-                        account = db.session.get(User, student_record.user_id) if student_record else existing
+                        account = (
+                            User.query.filter_by(id=student_record.user_id, school_id=school.id).first()
+                            if student_record
+                            else existing
+                        )
                         if account and account.role != "student":
                             raise ValueError("username belongs to another role")
                         if student_record:
@@ -635,7 +641,7 @@ def register_feature_routes(app, ctx):
                 "validation_errors": len(staged["errors"]),
                 "runtime_errors": runtime_errors,
             }
-            job = db.session.get(BulkImportJob, job.id)
+            job = BulkImportJob.query.filter_by(id=job.id, school_id=school.id).first_or_404()
             job.status, job.duplicate_mode = "completed", mode
             job.report_json, job.completed_at = json.dumps(report), datetime.utcnow()
             log_action(
