@@ -882,6 +882,89 @@ class DashboardTests(unittest.TestCase):
         self.assertIn(self.school.name, response.get_data(as_text=True))
         self.assertIn("RECEIPT-TEST-PAYMENT", response.get_data(as_text=True))
 
+    def test_new_school_registration_creates_first_admin_and_login_slip(self):
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["_csrf"] = "test-csrf"
+        response = client.post(
+            "/register-school",
+            data={
+                "_csrf": "test-csrf",
+                "school_name": "Onboarding Academy",
+                "slug": "onboarding-academy",
+                "admin_name": "First Administrator",
+                "username": "onboarding_admin",
+                "password": "Strong@Test123",
+                "email": "onboarding@example.com",
+                "phone": "0200000000",
+            },
+        )
+
+        school = run.School.query.filter_by(slug="onboarding-academy").first()
+        admin = run.User.query.filter_by(school_id=school.id, role="school_admin").first()
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.location.endswith("/login-slip"))
+        self.assertFalse(school.onboarded)
+        self.assertTrue(admin.must_change_password)
+
+    def test_unfinished_school_resumes_saved_setup_step(self):
+        school = run.School(name="Resume School", slug="resume-school", onboarded=False, onboarding_step=3)
+        run.db.session.add(school)
+        run.db.session.flush()
+        admin = run.User(
+            school_id=school.id,
+            role="school_admin",
+            full_name="Resume Admin",
+            username="resume_admin",
+            password_hash=generate_password_hash("Strong@Test123"),
+            must_change_password=False,
+        )
+        run.db.session.add(admin)
+        run.db.session.commit()
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = admin.session_version
+
+        response = client.get("/dashboard")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.location.endswith("/setup/3"))
+
+    def test_onboarding_cannot_launch_without_required_branding(self):
+        school = run.School(
+            name="Incomplete Launch School",
+            slug="incomplete-launch",
+            academic_year="2026/2027",
+            term="Term 1",
+            onboarded=False,
+            onboarding_step=14,
+        )
+        run.db.session.add(school)
+        run.db.session.flush()
+        admin = run.User(
+            school_id=school.id,
+            role="school_admin",
+            full_name="Launch Admin",
+            username="launch_admin",
+            password_hash=generate_password_hash("Strong@Test123"),
+            must_change_password=False,
+        )
+        run.db.session.add(admin)
+        run.db.session.commit()
+        client = run.app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = admin.session_version
+            session["_csrf"] = "test-csrf"
+
+        response = client.post("/setup/14", data={"_csrf": "test-csrf", "notes": "Ready"})
+        run.db.session.refresh(school)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(school.onboarded)
+        self.assertIn("School logo", response.get_data(as_text=True))
+
 
 if __name__ == "__main__":
     unittest.main()

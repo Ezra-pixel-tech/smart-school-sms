@@ -904,8 +904,8 @@ def school_required(fn):
         school = current_school()
         if not school:
             return redirect(url_for("dashboard"))
-        if not school.onboarded and request.endpoint != "onboarding":
-            return redirect(url_for("onboarding"))
+        if not school.onboarded and request.endpoint not in {"onboarding", "setup_wizard"}:
+            return redirect(url_for("setup_wizard", step=max(1, min(school.onboarding_step or 1, 14))))
         return fn(*args, **kwargs)
 
     return wrapper
@@ -2005,7 +2005,7 @@ def register_routes(app: Flask) -> None:
         user = current_user()
         school = current_school()
         if user.role != "system_admin" and school and not school.onboarded:
-            return redirect(url_for("onboarding"))
+            return redirect(url_for("setup_wizard", step=max(1, min(school.onboarding_step or 1, 14))))
         if user.role == "student":
             student = Student.query.filter_by(user_id=user.id, school_id=user.school_id).first()
             scores = (
@@ -2422,6 +2422,8 @@ def register_routes(app: Flask) -> None:
     @login_required("school_admin")
     def onboarding():
         school = current_school()
+        if not school.onboarded:
+            return redirect(url_for("setup_wizard", step=max(1, min(school.onboarding_step or 1, 14))))
         if request.method == "POST":
             school.name = request.form["name"]
             school.motto = request.form.get("motto", "")

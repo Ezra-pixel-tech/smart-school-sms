@@ -219,6 +219,7 @@ def register_platform_features(app, ctx):
     current_user, current_school = ctx["current_user"], ctx["current_school"]
     login_required, school_required = ctx["login_required"], ctx["school_required"]
     log_action = ctx["log_action"]
+    save_crest = ctx["save_crest"]
     models = init_platform_models(db)
     Assignment = models["Assignment"]
     FeeStructure = models["FeeStructure"]
@@ -418,6 +419,16 @@ def register_platform_features(app, ctx):
             "Final readiness check",
         ]
         data = json.loads(school.onboarding_data or "{}")
+        readiness = {
+            "School name": bool(school.name),
+            "Portal address": bool(school.slug),
+            "School logo": bool(school.crest),
+            "Academic year": bool(school.academic_year),
+            "Current term": bool(school.term),
+            "School administrator": bool(
+                User.query.filter_by(school_id=school.id, role="school_admin", active=True).first()
+            ),
+        }
         if request.method == "POST":
             try:
                 if step == 1:
@@ -427,6 +438,11 @@ def register_platform_features(app, ctx):
                     school.email = clean_email(request.form.get("email"))
                     school.phone = clean_text(request.form.get("phone"), maximum=80)
                     school.address = clean_text(request.form.get("address"), maximum=500)
+                    duplicate_slug = School.query.filter(
+                        func.lower(School.slug) == school.slug.lower(), School.id != school.id
+                    ).first()
+                    if duplicate_slug:
+                        raise ValueError("That school portal address is already in use.")
                 elif step == 2:
                     for key in ("primary_color", "secondary_color", "accent_color"):
                         value = request.form.get(key, "")
@@ -435,6 +451,11 @@ def register_platform_features(app, ctx):
                         setattr(school, key, value or getattr(school, key))
                     school.motto = clean_text(request.form.get("motto"), maximum=220)
                     school.welcome_message = clean_text(request.form.get("welcome_message"), maximum=300)
+                    school.crest = save_crest(request.files.get("crest")) or school.crest
+                    school.favicon = save_crest(request.files.get("favicon")) or school.favicon
+                    school.login_background = (
+                        save_crest(request.files.get("login_background")) or school.login_background
+                    )
                 elif step == 3:
                     school.academic_year = clean_text(
                         request.form.get("academic_year"), maximum=40, required=True, field="Academic year"
@@ -449,6 +470,19 @@ def register_platform_features(app, ctx):
                 school.onboarding_data = json.dumps(data)
                 school.onboarding_step = max(school.onboarding_step, min(step + 1, 14))
                 if step == 14:
+                    readiness = {
+                        "School name": bool(school.name),
+                        "Portal address": bool(school.slug),
+                        "School logo": bool(school.crest),
+                        "Academic year": bool(school.academic_year),
+                        "Current term": bool(school.term),
+                        "School administrator": bool(
+                            User.query.filter_by(school_id=school.id, role="school_admin", active=True).first()
+                        ),
+                    }
+                    missing = [label for label, ready in readiness.items() if not ready]
+                    if missing:
+                        raise ValueError("Complete these required items before launch: " + ", ".join(missing))
                     school.onboarded = True
                     school.status = "active"
                 log_action("onboarding_step", f"Completed setup step {step}")
@@ -466,7 +500,7 @@ def register_platform_features(app, ctx):
         <article class="card"><div class="progress"><span style="width:{{ step/14*100 }}%"></span></div>
         {% for category,message in get_flashed_messages(with_categories=true) %}
         <div class="flash {{ category }}">{{ message }}</div>{% endfor %}
-        <form method="post">{{ csrf() }}
+        <form method="post" {% if step == 2 %}enctype="multipart/form-data"{% endif %}>{{ csrf() }}
         {% if step == 1 %}
         {{ field('School name','name',value=school.name,required=true) }}
         {{ field('Short name','short_name',value=school.short_name) }}
@@ -480,12 +514,17 @@ def register_platform_features(app, ctx):
         {{ field('Secondary colour','secondary_color','color',value=school.secondary_color) }}
         {{ field('Accent colour','accent_color','color',value=school.accent_color) }}
         {{ field('Welcome message','welcome_message',value=school.welcome_message) }}
-        <p><a href="{{ url_for('onboarding') }}">Upload logo, signature and stamp</a></p>
+        <label>School logo<input name="crest" type="file" accept=".png,.jpg,.jpeg,.webp"></label>
+        <label>Browser icon<input name="favicon" type="file" accept=".png,.jpg,.jpeg,.webp"></label>
+        <label>Login background<input name="login_background" type="file" accept=".png,.jpg,.jpeg,.webp"></label>
         {% elif step == 3 %}
         {{ field('Academic year','academic_year',value=school.academic_year,required=true) }}
         {{ field('Current term','term',value=school.term,required=true) }}
         {{ field('Time zone','timezone',value=school.timezone) }}
         {{ field('Currency','currency',value=school.currency) }}
+        {% elif step == 14 %}
+        <h2>Portal readiness</h2>{% for label,ready in readiness.items() %}<p><b>{{ 'Ready' if ready else 'Required' }}</b> · {{ label }}</p>{% endfor %}
+        <p>Your school portal will be available at <b>{{ url_for('login',school_slug=school.slug,_external=true) if school.slug else 'after a portal address is saved' }}</b>.</p>
         {% else %}
         <p>Complete this area using the linked management page, then mark the step complete.</p>
         {% set links={4:'classes_subjects',5:'classes_subjects',6:'users',7:'teachers',
@@ -497,7 +536,15 @@ def register_platform_features(app, ctx):
         <div class="actions"><button class="btn green">{{ 'Launch School Portal' if step == 14 else 'Save and continue' }}</button>
         {% if step > 1 %}<a class="btn ghost" href="{{ url_for('setup_wizard',step=step-1) }}">Back</a>{% endif %}</div>
         </form></article></section></main>"""
-        return render_page(body, title="School Setup", step=step, labels=labels, school=school, data=data)
+        return render_page(
+            body,
+            title="School Setup",
+            step=step,
+            labels=labels,
+            school=school,
+            data=data,
+            readiness=readiness,
+        )
 
     @app.route("/assignments", methods=["GET", "POST"])
     @login_required("school_admin", "teacher", "student", "parent")
