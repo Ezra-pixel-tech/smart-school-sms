@@ -1,10 +1,4 @@
-"""Start Gunicorn while applying production database migrations safely.
-
-Render keeps the previous instance alive until the replacement binds a port.
-Starting Gunicorn first lets the replacement bind promptly, after which the
-additive migration can acquire the locks released by the previous instance.
-If migration fails, Gunicorn is stopped and the deployment fails closed.
-"""
+"""Bind Render's port, migrate the database, then start the real application."""
 
 from __future__ import annotations
 
@@ -12,44 +6,82 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-def stop_process(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
+class MaintenanceHandler(BaseHTTPRequestHandler):
+    """Keep a replacement instance reachable while its schema is upgraded."""
+
+    def _respond(self) -> None:
+        body = b'{"status":"starting","detail":"Database migration in progress"}\n'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    do_GET = _respond
+    do_HEAD = _respond
+
+    def log_message(self, format: str, *args: object) -> None:
         return
-    process.terminate()
-    try:
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
+
+
+def start_maintenance_server(port: int) -> tuple[ThreadingHTTPServer, threading.Thread]:
+    server = ThreadingHTTPServer(("0.0.0.0", port), MaintenanceHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def stop_maintenance_server(server: ThreadingHTTPServer, thread: threading.Thread) -> None:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
 
 
 def main() -> int:
-    gunicorn = subprocess.Popen(["gunicorn", "run:app"])
+    port = int(os.getenv("PORT", "10000"))
+    server, thread = start_maintenance_server(port)
+    print(f"Maintenance server listening on 0.0.0.0:{port}", flush=True)
 
-    def forward_signal(signum: int, _frame: object) -> None:
-        if gunicorn.poll() is None:
-            gunicorn.send_signal(signum)
+    terminated = False
+
+    def forward_signal(_signum: int, _frame: object) -> None:
+        nonlocal terminated
+        terminated = True
 
     signal.signal(signal.SIGTERM, forward_signal)
     signal.signal(signal.SIGINT, forward_signal)
 
-    # Give Gunicorn a brief opportunity to bind Render's assigned port before
-    # the migration waits for locks held by the retiring instance.
+    # Binding the port lets Render retire the previous instance. Waiting briefly
+    # then running migrations without importing the web app avoids requests and
+    # database connections from this instance competing with schema locks.
     time.sleep(float(os.getenv("MIGRATION_START_DELAY_SECONDS", "2")))
-    if gunicorn.poll() is not None:
-        return gunicorn.returncode or 1
+    if terminated:
+        stop_maintenance_server(server, thread)
+        return 143
 
-    migration = subprocess.run(
-        [sys.executable, "manage.py", "migrate"],
-        check=False,
-    )
-    if migration.returncode != 0:
-        stop_process(gunicorn)
-        return migration.returncode
+    print("Running database migrations", flush=True)
+    migration = subprocess.run([sys.executable, "manage.py", "migrate"], check=False)
+    if migration.returncode != 0 or terminated:
+        stop_maintenance_server(server, thread)
+        return migration.returncode or 143
 
+    print("Database migrations completed", flush=True)
+    stop_maintenance_server(server, thread)
+
+    gunicorn = subprocess.Popen(["gunicorn", "--bind", f"0.0.0.0:{port}", "run:app"])
+
+    def forward_to_gunicorn(signum: int, _frame: object) -> None:
+        if gunicorn.poll() is None:
+            gunicorn.send_signal(signum)
+
+    signal.signal(signal.SIGTERM, forward_to_gunicorn)
+    signal.signal(signal.SIGINT, forward_to_gunicorn)
     return gunicorn.wait()
 
 
