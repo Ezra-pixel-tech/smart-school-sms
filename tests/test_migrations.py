@@ -10,7 +10,7 @@ def test_legacy_schema_changes_commit_before_foundation_inspection() -> None:
     db = MagicMock()
     select_result = MagicMock()
     select_result.fetchall.return_value = []
-    db.session.execute.side_effect = [MagicMock(), select_result, MagicMock()]
+    db.session.execute.side_effect = [MagicMock(), select_result, MagicMock(), MagicMock()]
     db.session.commit.side_effect = lambda: events.append("commit")
 
     def legacy() -> None:

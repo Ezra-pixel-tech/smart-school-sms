@@ -9,6 +9,10 @@ MIGRATIONS = (
         "20260730_01_foundation",
         "Add tenant status, branding, session security, and archival fields.",
     ),
+    (
+        "20260731_02_repair_foundation",
+        "Repair any foundation columns missed by an interrupted deployment.",
+    ),
 )
 
 
@@ -124,7 +128,7 @@ def run_migrations(db, create_all, legacy_migrations=None) -> list[str]:
         if version in applied:
             continue
         try:
-            if version == "20260730_01_foundation":
+            if version in {"20260730_01_foundation", "20260731_02_repair_foundation"}:
                 _foundation(db)
             db.session.execute(
                 text("""
