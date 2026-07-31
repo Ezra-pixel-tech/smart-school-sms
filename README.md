@@ -53,6 +53,8 @@ The username is `admin`; the user must change the bootstrap password at first lo
 6. Students log in to view and print their results.
 7. The school admin can also manage attendance, fees, notices, timetable, and library resources.
 
+See `docs/BRANDED_SCHOOL_PORTALS.md` for branded portal URLs, onboarding, and Render DNS setup.
+
 ## Project Folder
 
 ```text

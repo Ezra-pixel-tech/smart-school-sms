@@ -41,6 +41,8 @@ services:
         sync: false
       - key: APP_URL
         sync: false
+      - key: SCHOOL_PORTAL_BASE_DOMAIN
+        sync: false
       - key: PASSWORD_RESET_EXPIRY_MINUTES
         value: "60"
       - key: PASSWORD_MIN_LENGTH
