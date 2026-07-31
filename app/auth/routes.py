@@ -6,7 +6,7 @@ from flask_login import current_user, login_required, login_user, logout_user
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.extensions import bcrypt, db
-from app.models import AuditLog, Communication, Score, School, Student, User
+from app.models import AuditLog, Communication, School, Score, Student, User
 
 auth = Blueprint("auth", __name__)
 
