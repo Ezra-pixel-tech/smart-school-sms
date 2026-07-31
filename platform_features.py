@@ -238,7 +238,7 @@ def register_platform_features(app, ctx):
     def school_theme():
         school = ctx["portal_school"]()
         if not school:
-            return {"school_theme_style": ""}
+            return {"school_theme_style": "", "school_theme_css": ""}
         style = (
             f"--school-primary:{school.primary_color or '#0b2b5c'};"
             f"--school-secondary:{school.secondary_color or '#125edb'};"
@@ -247,7 +247,20 @@ def register_platform_features(app, ctx):
             f"--app-primary-strong:{school.primary_color or '#0b2b5c'};"
             f"--app-success:{school.accent_color or '#079455'};"
         )
-        return {"school_theme_style": style}
+        background = (
+            url_for("public_school_branding", school_slug=school.slug, asset="background")
+            if school.login_background
+            else ""
+        )
+        css = f"""<style>
+        .reference-report-head,.academic-year-box,.reference-subject-table,.report-summary-strip,
+        .reference-grading-key{{border-color:{school.primary_color or '#0b2b5c'}!important}}
+        .report-brand,.reference-report>h1,.reference-report footer{{color:{school.primary_color or '#0b2b5c'}!important}}
+        .reference-subject-table th,.reference-grading-key>strong{{background:{school.primary_color or '#0b2b5c'}!important}}
+        .reference-report footer span{{background:{school.primary_color or '#0b2b5c'}!important}}
+        {f'.login-shell{{background-image:linear-gradient(135deg,rgba(4,25,70,.82),rgba(12,83,65,.62)),url({background})!important;background-size:cover!important;background-position:center!important}}' if background else ''}
+        </style>"""
+        return {"school_theme_style": style, "school_theme_css": css}
 
     @app.route("/school/<slug>")
     def school_landing(slug):
@@ -762,12 +775,45 @@ def register_platform_features(app, ctx):
         <label>Invoice<select name="invoice_id">{% for item in invoices %}<option value="{{ item.id }}">{{ item.invoice_number }}</option>{% endfor %}</select></label>
         {{ field('Amount','amount','number',required=true) }}{{ field('Reason','reason',required=true) }}
         <button class="btn green">Record payment</button></form></article></div>
-        <article class="card"><h2>Payments</h2><table><tr><th>Reference</th><th>Amount</th><th>Method</th><th>Date</th></tr>
+        <article class="card"><h2>Payments</h2><table><tr><th>Reference</th><th>Amount</th><th>Method</th><th>Date</th><th>Receipt</th></tr>
         {% for item in payments %}<tr><td>{{ item.reference }}</td><td>{{ item.currency }} {{ '%.2f'|format(item.amount_subunit/100) }}</td>
-        <td>{{ item.method|title }}</td><td>{{ fmt_dt(item.paid_at) }}</td></tr>{% else %}<tr><td colspan="4">No payments.</td></tr>{% endfor %}</table></article>
+        <td>{{ item.method|title }}</td><td>{{ fmt_dt(item.paid_at) }}</td><td><a class="btn ghost" href="{{ url_for('payment_receipt',payment_id=item.id) }}">View</a></td></tr>{% else %}<tr><td colspan="5">No payments.</td></tr>{% endfor %}</table></article>
         </section></div></main>"""
         )
         return render_page(body, title="Finance", structures=structures, invoices=invoices, payments=payments)
+
+    @app.get("/finance/payments/<int:payment_id>/receipt")
+    @login_required("school_admin", "accountant", "parent", "student")
+    @school_required
+    def payment_receipt(payment_id):
+        user, school = current_user(), current_school()
+        payment = FinancePayment.query.filter_by(id=payment_id, school_id=school.id).first_or_404()
+        student = Student.query.filter_by(id=payment.student_id, school_id=school.id).first_or_404()
+        student_user = User.query.filter_by(id=student.user_id, school_id=school.id).first_or_404()
+        if user.role == "student" and student.user_id != user.id:
+            abort(404)
+        if user.role == "parent":
+            ParentStudent = ctx["ParentStudent"]
+            if not ParentStudent.query.filter_by(
+                school_id=school.id, parent_id=user.id, student_id=student.id
+            ).first():
+                abort(404)
+        body = """<main class="wrap"><article class="card receipt-card" style="max-width:760px;margin:auto;border-top:8px solid var(--school-primary)">
+        <div class="report-head">{% if school.crest %}<img class="report-crest" src="{{ url_for('uploads',filename=school.crest) }}" alt="{{ school.name }} logo">{% endif %}
+        <div class="report-title"><h2>{{ school.name }}</h2><p>{{ school.address }}</p><p>{{ school.phone }} {{ school.email }}</p><b>OFFICIAL PAYMENT RECEIPT</b></div></div>
+        <div class="grid cols-2"><p><b>Receipt reference</b><br>{{ payment.reference }}</p><p><b>Date</b><br>{{ fmt_dt(payment.paid_at,'%d %B %Y %H:%M') }}</p>
+        <p><b>Received from</b><br>{{ student_user.full_name }}</p><p><b>Student ID</b><br>{{ student.admission_no }}</p>
+        <p><b>Amount</b><br><strong style="font-size:24px;color:var(--school-accent)">{{ payment.currency }} {{ '%.2f'|format(payment.amount_subunit/100) }}</strong></p><p><b>Method</b><br>{{ payment.method|title }}</p></div>
+        <p><b>Purpose</b><br>{{ payment.reason or 'School fee payment' }}</p><p class="muted">This receipt was generated by {{ school.name }}.</p>
+        <div class="actions no-print"><button class="btn" onclick="window.print()">Print Receipt</button><a class="btn ghost" href="{{ url_for('finance_center') }}">Back</a></div></article></main>"""
+        return render_page(
+            body,
+            title=f"Receipt {payment.reference}",
+            payment=payment,
+            student=student,
+            student_user=student_user,
+            school=school,
+        )
 
     @app.post("/logout-all")
     @login_required()

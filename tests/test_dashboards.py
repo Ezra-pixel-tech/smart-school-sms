@@ -824,6 +824,64 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Invalid username, password, or portal", response.get_data(as_text=True))
 
+    def test_school_portal_serves_only_its_configured_public_favicon(self):
+        filename = "tenant-public-favicon.png"
+        self.school.slug = "favicon-school"
+        self.school.favicon = filename
+        run.db.session.commit()
+        path = run.UPLOAD_DIR / filename
+        path.write_bytes(b"favicon-content")
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        client = run.app.test_client()
+        page = client.get("/school/favicon-school/login")
+        asset = client.get("/school/favicon-school/branding/favicon")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("/school/favicon-school/branding/favicon", page.get_data(as_text=True))
+        self.assertEqual(asset.status_code, 200)
+        self.assertEqual(asset.data, b"favicon-content")
+        self.assertEqual(client.get("/school/favicon-school/branding/background").status_code, 404)
+
+    def test_payment_receipt_is_branded_and_tenant_scoped(self):
+        Invoice = run.app.platform_models["Invoice"]
+        FinancePayment = run.app.platform_models["FinancePayment"]
+        invoice = Invoice(
+            school_id=self.school.id,
+            student_id=self.student.id,
+            invoice_number="RECEIPT-TEST-INVOICE",
+            academic_year=self.school.academic_year,
+            term=self.school.term,
+            amount_subunit=2500,
+            balance_subunit=0,
+            status="paid",
+        )
+        run.db.session.add(invoice)
+        run.db.session.flush()
+        payment = FinancePayment(
+            school_id=self.school.id,
+            invoice_id=invoice.id,
+            student_id=self.student.id,
+            reference="RECEIPT-TEST-PAYMENT",
+            amount_subunit=2500,
+            currency="GHS",
+            reason="Tuition",
+            recorded_by=self.users["school_admin"].id,
+        )
+        run.db.session.add(payment)
+        run.db.session.commit()
+
+        client = run.app.test_client()
+        admin = self.users["school_admin"]
+        with client.session_transaction() as session:
+            session["user_id"] = admin.id
+            session["session_version"] = admin.session_version
+        response = client.get(f"/finance/payments/{payment.id}/receipt")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.school.name, response.get_data(as_text=True))
+        self.assertIn("RECEIPT-TEST-PAYMENT", response.get_data(as_text=True))
+
 
 if __name__ == "__main__":
     unittest.main()
