@@ -1,3 +1,3 @@
 release: python manage.py migrate
-web: gunicorn run:app
+web: python render_start.py
 

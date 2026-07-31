@@ -10,7 +10,9 @@ payment, and messaging records.
    restored.
 2. Configure all required environment variables in Render. Never copy real
    secrets into source files.
-3. Deploy the branch. Render runs `python manage.py migrate` before Gunicorn.
+3. Deploy the branch. Render runs `python render_start.py`, which binds the
+   web port and applies the additive migration before serving authenticated
+   traffic. The deployment fails closed if migration does not succeed.
 4. Confirm `/health` reports `status: ok`.
 5. Test owner, school administrator, teacher, student, and parent access using a
    test school before enabling the release for all schools.
