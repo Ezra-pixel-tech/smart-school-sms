@@ -33,6 +33,13 @@ class Config:
         "pool_pre_ping": True,
         "pool_recycle": int(os.getenv("DB_POOL_RECYCLE_SECONDS", "280")),
     }
+    # Supabase/pgBouncer-style pooled PostgreSQL connections can reuse backend
+    # sessions across clients. Psycopg's automatic prepared statements may then
+    # collide with statements created by another client. Disable only that
+    # driver optimization; PostgreSQL/Supabase and all stored data remain in use.
+    if DATABASE_URL.startswith(("postgres://", "postgresql://")):
+        SQLALCHEMY_ENGINE_OPTIONS["connect_args"] = {"prepare_threshold": None}
+
     SCHOOL_UPLOAD_LIMIT_MB = int(os.getenv("SCHOOL_UPLOAD_LIMIT_MB", "5"))
     MAX_CONTENT_LENGTH = SCHOOL_UPLOAD_LIMIT_MB * 1024 * 1024
     SESSION_COOKIE_HTTPONLY = True
