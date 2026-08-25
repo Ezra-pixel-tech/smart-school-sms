@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from flask import current_app, jsonify, request
 from sqlalchemy import text
@@ -36,9 +37,24 @@ def validate_environment(app) -> list[str]:
     production = not app.debug
     secret = app.config.get("SECRET_KEY") or ""
     database_url = app.config.get("SQLALCHEMY_DATABASE_URI") or ""
+    app_url = (os.getenv("APP_URL") or "").strip().rstrip("/")
 
     if production and len(secret) < 32:
         errors.append("SECRET_KEY must contain at least 32 characters in production.")
+    if production and not app.config.get("SESSION_COOKIE_SECURE"):
+        errors.append("SESSION_COOKIE_SECURE must be enabled in production.")
+    if production:
+        parsed_app_url = urlparse(app_url) if app_url else None
+        if (
+            parsed_app_url is None
+            or parsed_app_url.scheme != "https"
+            or not parsed_app_url.hostname
+            or parsed_app_url.username
+            or parsed_app_url.password
+            or parsed_app_url.query
+            or parsed_app_url.fragment
+        ):
+            errors.append("APP_URL must be configured as a trusted HTTPS origin in production.")
     if production and database_url.startswith("sqlite:"):
         warnings.append(
             "Production is using SQLite. Configure DATABASE_URL with PostgreSQL before accepting live school data."
@@ -47,7 +63,7 @@ def validate_environment(app) -> list[str]:
         errors.append("PAYSTACK_SECRET_KEY has an invalid format.")
     if os.getenv("RESEND_API_KEY") and not os.getenv("EMAIL_FROM"):
         errors.append("EMAIL_FROM is required when RESEND_API_KEY is configured.")
-    if os.getenv("APP_URL") and not os.getenv("APP_URL", "").startswith("https://"):
+    if app_url and not app_url.startswith("https://"):
         warnings.append("APP_URL should use HTTPS in production.")
 
     app.config["ENVIRONMENT_WARNINGS"] = tuple(warnings)
